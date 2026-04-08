@@ -1,0 +1,29 @@
+# Scaffold agent sandbox configuration
+# Used when running targets inside Claude Code / Codex CLI via ACP.
+# Differs from default compose.yaml:
+#   - Uses scaffold.Dockerfile (includes Node.js for ACP adapters)
+#   - Network NOT internal (ACP adapter needs to reach model APIs)
+
+services:
+  default:
+    build:
+      context: .
+      dockerfile: scaffold.Dockerfile
+    init: true
+    command: tail -f /dev/null
+    working_dir: /workspace
+
+    # Resource limits
+    cpus: 2.0
+    mem_limit: 4gb
+
+    # Network with external access (required for ACP model API calls)
+    networks:
+      - scaffold_net
+
+    environment:
+      - TERM=xterm-256color
+
+networks:
+  scaffold_net:
+    driver: bridge
