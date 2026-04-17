@@ -1,4 +1,4 @@
-# Petri
+# Automated Alignment Auditing
 
 An automated alignment-auditing framework for **production coding
 agents** — Claude Code, Codex CLI, and Gemini CLI — running in the same
