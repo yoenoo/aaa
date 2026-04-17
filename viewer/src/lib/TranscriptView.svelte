@@ -295,6 +295,61 @@
     if (!transcript) return;
     triggerDownload(`${logId}.md`, transcriptToMarkdown(transcript), 'text/markdown');
   }
+
+  function escapeHtmlAttr(s: string): string {
+    return s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
+  }
+
+  async function downloadHtml() {
+    if (!transcript) return;
+
+    // Expand every <details> so the saved HTML captures all content.
+    const detailsEls = Array.from(document.querySelectorAll<HTMLDetailsElement>('details'));
+    const prevOpen = detailsEls.map((d) => d.open);
+    detailsEls.forEach((d) => (d.open = true));
+    await new Promise((r) => requestAnimationFrame(() => r(null)));
+
+    try {
+      // Inline linked stylesheets so the file renders standalone.
+      const links = Array.from(document.querySelectorAll<HTMLLinkElement>('link[rel="stylesheet"]'));
+      const cssParts: string[] = [];
+      for (const link of links) {
+        try {
+          const r = await fetch(link.href);
+          if (r.ok) cssParts.push(await r.text());
+        } catch {
+          /* ignore cross-origin fetch failures */
+        }
+      }
+      const inlineStyles = Array.from(document.querySelectorAll('style'))
+        .map((s) => s.textContent || '')
+        .join('\n');
+      const allCss = cssParts.join('\n') + '\n' + inlineStyles;
+
+      const mainEl = document.querySelector('main');
+      const mainHtml = mainEl ? mainEl.outerHTML : document.body.innerHTML;
+      const bodyClass = document.body.className;
+      const rootStyle = document.documentElement.getAttribute('style') || '';
+      const title = transcript.title || logId;
+
+      const html = `<!doctype html>
+<html lang="en"${rootStyle ? ` style="${escapeHtmlAttr(rootStyle)}"` : ''}>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${escapeHtmlAttr(title)}</title>
+<style>${allCss}</style>
+</head>
+<body${bodyClass ? ` class="${escapeHtmlAttr(bodyClass)}"` : ''}>
+${mainHtml}
+</body>
+</html>`;
+
+      triggerDownload(`${logId}.html`, html, 'text/html');
+    } finally {
+      detailsEls.forEach((d, i) => (d.open = prevOpen[i]));
+    }
+  }
 </script>
 
 <main>
@@ -314,8 +369,9 @@
         {/if}
         <div class="brand">Petri · Audit</div>
         <div class="dl-group">
-          <button class="dl-btn" onclick={downloadJson} title="Download raw transcript JSON">↓ JSON</button>
+          <button class="dl-btn" onclick={downloadHtml} title="Save as standalone HTML (styled, self-contained)">↓ HTML</button>
           <button class="dl-btn" onclick={downloadMarkdown} title="Download transcript as Markdown">↓ Markdown</button>
+          <button class="dl-btn" onclick={downloadJson} title="Download raw transcript JSON">↓ JSON</button>
         </div>
       </div>
       <h1>{transcript.title}</h1>
