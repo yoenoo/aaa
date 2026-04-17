@@ -228,6 +228,73 @@
     const h = Math.floor(m / 60);
     return `${h}h ${(m - h * 60).toString().padStart(2, '0')}m`;
   }
+
+  function triggerDownload(filename: string, content: string, mime: string) {
+    const blob = new Blob([content], { type: mime });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  async function downloadJson() {
+    if (!transcript) return;
+    const res = await fetch(`/data/${encodeURIComponent(logId)}.json`);
+    const text = await res.text();
+    triggerDownload(`${logId}.json`, text, 'application/json');
+  }
+
+  function transcriptToMarkdown(t: TranscriptData): string {
+    const lines: string[] = [];
+    lines.push(`# ${t.title}`, '');
+    lines.push(`- **Auditor:** \`${t.auditor_model}\``);
+    lines.push(`- **Target:** \`${t.target_model}\` (${t.scaffold_name})`);
+    lines.push(`- **Seed:** \`${t.seed_name}\``);
+    if (t.total_time_s != null) lines.push(`- **Duration:** ${fmtDuration(t.total_time_s)}`);
+    lines.push('');
+
+    if (t.judge) {
+      lines.push('## Judge Verdict', '');
+      for (const [k, v] of Object.entries(t.judge.scores || {})) {
+        lines.push(`- **${k}:** ${v}/10`);
+      }
+      if (t.judge.summary) lines.push('', '### Summary', '', t.judge.summary);
+      lines.push('');
+    }
+
+    lines.push('## Transcript', '');
+    for (const ev of t.events) {
+      const role = ev.role === 'tool' ? (ev.tool_name === 'query_target' ? 'target' : `tool · ${ev.tool_name}`) : ev.role;
+      lines.push(`### [${ev.id}] ${role}`, '');
+      if (ev.reasoning) {
+        lines.push('<details><summary>internal reasoning</summary>', '', '```', ev.reasoning, '```', '', '</details>', '');
+      }
+      if (ev.content) lines.push(ev.content, '');
+      for (const tc of ev.tool_calls || []) {
+        lines.push(`**tool call:** \`${tc.function}(${JSON.stringify(tc.arguments).slice(0, 200)})\``, '');
+      }
+      if (ev.target_activity && ev.target_activity.length) {
+        for (const turn of ev.target_activity) {
+          if (turn.reasoning) lines.push(`_reasoning:_ ${turn.reasoning}`, '');
+          if (turn.text) lines.push(turn.text, '');
+          for (const tc of turn.tool_calls || []) {
+            lines.push(`\`${tc.function}(${JSON.stringify(tc.arguments).slice(0, 200)})\``);
+            if (tc.result) lines.push('```', tc.result.slice(0, 2000), '```', '');
+          }
+        }
+      }
+    }
+    return lines.join('\n');
+  }
+
+  function downloadMarkdown() {
+    if (!transcript) return;
+    triggerDownload(`${logId}.md`, transcriptToMarkdown(transcript), 'text/markdown');
+  }
 </script>
 
 <main>
@@ -246,6 +313,10 @@
           <button class="back-link" onclick={onBack} title="Back to all audits">← all audits</button>
         {/if}
         <div class="brand">Petri · Audit</div>
+        <div class="dl-group">
+          <button class="dl-btn" onclick={downloadJson} title="Download raw transcript JSON">↓ JSON</button>
+          <button class="dl-btn" onclick={downloadMarkdown} title="Download transcript as Markdown">↓ Markdown</button>
+        </div>
       </div>
       <h1>{transcript.title}</h1>
       <div class="meta">
@@ -465,6 +536,27 @@
     letter-spacing: 0.18em;
     color: var(--text-muted);
     font-weight: 600;
+  }
+  .dl-group {
+    margin-left: auto;
+    display: flex;
+    gap: 6px;
+  }
+  .dl-btn {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+    padding: 4px 10px;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    font: inherit;
+    font-size: 0.72rem;
+    letter-spacing: 0.02em;
+    transition: border-color 0.12s, color 0.12s;
+  }
+  .dl-btn:hover {
+    border-color: var(--border-strong);
+    color: var(--text);
   }
   header h1 {
     margin: 0 0 14px;
