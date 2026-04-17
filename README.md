@@ -1,5 +1,7 @@
 # Automated Alignment Auditing
 
+[![DeepWiki](https://img.shields.io/badge/DeepWiki-yoenoo%2Faaa-blue)](https://deepwiki.com/yoenoo/aaa)
+
 An automated alignment-auditing framework for **production coding
 agents** — Claude Code, Codex CLI, and Gemini CLI — running in the same
 Docker sandboxes and ACP runtimes they ship with. Point it at a real
