@@ -155,16 +155,67 @@
 
   interface Finding { dimension: string; score: number; text: string; }
 
-  const findings = $derived.by<Finding[]>(() => {
-    if (!transcript) return [];
-    const out: Finding[] = [];
-    const re = /^\s*-\s+(.+?)\s+\((\d+)\)\s*:\s*(.+?)$/gm;
-    let m: RegExpExecArray | null;
-    while ((m = re.exec(transcript.judge.summary || '')) !== null) {
-      out.push({ dimension: m[1].trim(), score: parseInt(m[2], 10), text: m[3].trim() });
+  // Parse paragraphs of the shape:
+  //   "dim_name (N): text"
+  //   "- dim_name (N): text"
+  //   "**Dim Name (N/10)**: text"
+  //   "dim_a (N) / dim_b (N): text"         (shared text, one Finding per dimension)
+  //   "dim_name: N/10 — text"               (score after colon, em-dash body)
+  //   "dim_name: N/10 - text"               (ASCII hyphen variant)
+  //   "dim_a, dim_b: N/10 — text"           (comma-listed dims with shared score)
+  // Lines like "All other dimensions: 1/10. …" stay in leftover.
+  function parseFindings(summary: string): { findings: Finding[]; leftover: string } {
+    if (!summary) return { findings: [], leftover: '' };
+    const parenHead = /\b([A-Za-z][A-Za-z0-9_ \-\/]*?)\s*\((\d+)(?:\s*\/\s*10)?\)/g;
+    // head ("dim" or "dim_a / dim_b" or "dim_a, dim_b"): N/10 [em-dash|hyphen] body
+    const postColon = /^([A-Za-z][A-Za-z0-9_ ]*(?:\s*[\/,]\s*[A-Za-z][A-Za-z0-9_ ]*)*)\s*:\s*(\d+)\s*\/\s*10\s*[—–\-]\s+(.+)$/s;
+    const findings: Finding[] = [];
+    const leftoverParts: string[] = [];
+
+    for (const raw of summary.split(/\n\s*\n/)) {
+      const para = raw.trim();
+      if (!para) continue;
+      const stripped = para.replace(/^\s*[-*]\s+/, '').replace(/^\*+|\*+$/g, '');
+
+      // catch-all "all other ..." / "remaining ..." lines — keep as prose
+      if (/^\s*(all other|other dimensions|remaining)/i.test(stripped)) {
+        leftoverParts.push(para);
+        continue;
+      }
+
+      // shape: "dim: N/10 — text"
+      const pm = postColon.exec(stripped);
+      if (pm) {
+        const score = parseInt(pm[2], 10);
+        const body = pm[3].trim();
+        for (const name of pm[1].split(/[\/,]/).map((s) => s.trim().replace(/\*+/g, '')).filter(Boolean)) {
+          findings.push({ dimension: name, score, text: body });
+        }
+        continue;
+      }
+
+      // shape: "dim (N): text" / "dim_a (N) / dim_b (N): text"
+      const colon = stripped.indexOf(':');
+      if (colon < 0) { leftoverParts.push(para); continue; }
+      const head = stripped.slice(0, colon);
+      const body = stripped.slice(colon + 1).trim();
+      const dims: { name: string; score: number }[] = [];
+      parenHead.lastIndex = 0;
+      let hm: RegExpExecArray | null;
+      while ((hm = parenHead.exec(head)) !== null) {
+        const name = hm[1].trim().replace(/\*+/g, '');
+        if (!name) continue;
+        dims.push({ name, score: parseInt(hm[2], 10) });
+      }
+      if (dims.length === 0 || !body) { leftoverParts.push(para); continue; }
+      for (const d of dims) findings.push({ dimension: d.name, score: d.score, text: body });
     }
-    return out.sort((a, b) => b.score - a.score);
-  });
+    return { findings: findings.sort((a, b) => b.score - a.score), leftover: leftoverParts.join('\n\n') };
+  }
+
+  const parsed = $derived(parseFindings(transcript?.judge.summary || ''));
+  const findings = $derived(parsed.findings);
+  const leftoverSummary = $derived(parsed.leftover);
   const notable = $derived(findings.filter(f => f.score > 1));
   const quiet = $derived(findings.filter(f => f.score <= 1));
 
@@ -264,6 +315,10 @@
               {/each}
             </ul>
           </details>
+        {/if}
+
+        {#if leftoverSummary}
+          <div class="verdict-leftover"><MarkdownText text={leftoverSummary} /></div>
         {/if}
       {/if}
     </section>
@@ -631,6 +686,14 @@
     font-size: 0.95rem;
     line-height: 1.7;
     color: var(--text);
+  }
+  .verdict-leftover {
+    margin-top: 14px;
+    padding-top: 12px;
+    border-top: 1px dashed var(--border);
+    font-size: 0.85rem;
+    line-height: 1.6;
+    color: var(--text-muted);
   }
   .seed-body {
     margin-top: 12px;

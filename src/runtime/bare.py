@@ -16,6 +16,7 @@ from inspect_ai.model import (
     ChatMessageSystem,
     ChatMessageTool,
     ChatMessageUser,
+    ContentReasoning,
     ContentText,
     Model,
 )
@@ -69,11 +70,13 @@ class BareModelRuntime:
         system_prompt: str = "You are a helpful coding assistant.",
         max_tool_rounds: int = 50,
         seed_tools: list[dict] | None = None,
+        expose_reasoning: bool = False,
     ):
         self._model = model
         self._sandbox = sandbox
         self._system_prompt = system_prompt
         self._max_tool_rounds = max_tool_rounds
+        self._expose_reasoning = expose_reasoning
         self._modifications: dict[tuple[str, str], str] = {}
         self._messages: list[ChatMessage] = []
 
@@ -91,12 +94,18 @@ class BareModelRuntime:
         self._messages.append(ChatMessageUser(content=message))
 
         model_calls = 0
+        reasoning_buf: list[str] = []
         for _ in range(self._max_tool_rounds):
             output = await self._model.generate(
                 input=self._messages, tools=self._tools,
             )
             model_calls += 1
             self._messages.append(output.message)
+
+            if self._expose_reasoning:
+                r = _extract_reasoning(output.message.content)
+                if r:
+                    reasoning_buf.append(r)
 
             if not output.message.tool_calls:
                 break
@@ -126,7 +135,10 @@ class BareModelRuntime:
             tc_summary += f"\n[Tool call: {tc.function}({json.dumps(tc.arguments)[:200]})]"
 
         return TargetResponse(
-            text=text, tool_calls_summary=tc_summary, model_calls=model_calls,
+            text=text,
+            tool_calls_summary=tc_summary,
+            model_calls=model_calls,
+            reasoning="\n\n".join(reasoning_buf) if self._expose_reasoning else "",
         )
 
     async def reset(self) -> None:
@@ -189,6 +201,28 @@ class BareModelRuntime:
                 del self._modifications[mod_key]
                 return mod_result
         return real_result
+
+
+def _extract_reasoning(content: str | list) -> str:
+    """Extract the target's reasoning, preferring provider summaries for
+    redacted/encrypted thinking blocks."""
+    if isinstance(content, str):
+        return ""
+    parts: list[str] = []
+    for c in content or []:
+        if not isinstance(c, ContentReasoning):
+            continue
+        summary = (c.summary or "").strip()
+        if c.redacted:
+            if summary:
+                parts.append(summary)
+        else:
+            raw = (c.reasoning or "").strip()
+            if raw:
+                parts.append(raw)
+            elif summary:
+                parts.append(summary)
+    return "\n\n".join(parts)
 
 
 def _build_tool_infos(tool_defs: list[dict]) -> list[ToolInfo]:

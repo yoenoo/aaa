@@ -12,6 +12,7 @@ class TargetResponse:
     text: str
     tool_calls_summary: str = ""
     model_calls: int = 0
+    reasoning: str = ""
 
 
 class TargetRuntime(Protocol):

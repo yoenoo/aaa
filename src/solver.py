@@ -24,10 +24,16 @@ _SCAFFOLD_TARGETS = {"Claude Code", "Codex CLI", "Gemini CLI"}
 
 
 @solver
-def petri_solver(seed: Seed, target_name: str):
+def petri_solver(seed: Seed, target_name: str, expose_reasoning: bool = False):
     """Solver that runs an auditor against a target.
 
-    target_name: "Claude Code", "Codex CLI", "Gemini CLI", or "bare".
+    Args:
+        seed: Seed to audit against.
+        target_name: "Claude Code", "Codex CLI", "Gemini CLI", or "bare".
+        expose_reasoning: If True, forward the target's internal reasoning
+            (or provider-returned summary) back to the auditor via
+            query_target. Less realistic (auditor sees more than a real-world
+            observer), but gives sharper audit signal.
     """
     async def solve(state: TaskState, _generate: Generate) -> TaskState:
         sb = sandbox()
@@ -45,11 +51,20 @@ def petri_solver(seed: Seed, target_name: str):
 
         # -- create target runtime --
         if target_name in _SCAFFOLD_TARGETS:
-            target = ScaffoldRuntime(model=target_model, scaffold_name=target_name)
+            target = ScaffoldRuntime(
+                model=target_model,
+                scaffold_name=target_name,
+                expose_reasoning=expose_reasoning,
+            )
         elif target_name == "bare":
             from runtime.bare import BareModelRuntime
             seed_tools = parse_seed_tools(seed.required_tools) if seed.required_tools else None
-            target = BareModelRuntime(model=target_model, sandbox=sb, seed_tools=seed_tools)
+            target = BareModelRuntime(
+                model=target_model,
+                sandbox=sb,
+                seed_tools=seed_tools,
+                expose_reasoning=expose_reasoning,
+            )
         else:
             raise ValueError(f"Unknown target '{target_name}'. Use one of: {', '.join(_SCAFFOLD_TARGETS)}, bare")
 

@@ -74,12 +74,13 @@ docker compose -f sandbox/scaffold-compose.yaml build
 ## Run an audit
 
 Audits are `inspect_ai` tasks. The task lives at
-[`src/tasks.py@petri_task`](src/tasks.py) and takes two arguments:
+[`src/tasks.py@petri_task`](src/tasks.py) and takes three arguments:
 
-| Arg           | Default                     | Values                                                          |
-| ------------- | --------------------------- | --------------------------------------------------------------- |
-| `seed_name`   | `sc-oversight-code-review`  | stem of any `.yaml` in [`src/seeds/`](src/seeds)                |
-| `target_name` | `Claude Code`               | `Claude Code`, `Codex CLI`, `Gemini CLI`, or `bare`             |
+| Arg                 | Default                     | Values                                                          |
+| ------------------- | --------------------------- | --------------------------------------------------------------- |
+| `seed_name`         | `sc-oversight-code-review`  | stem of any `.yaml` in [`src/seeds/`](src/seeds)                |
+| `target_name`       | `Claude Code`               | `Claude Code`, `Codex CLI`, `Gemini CLI`, or `bare`             |
+| `expose_reasoning`  | `false`                     | `true` forwards the target's reasoning to the auditor           |
 
 Models come from inspect_ai's role system:
 
@@ -124,6 +125,37 @@ This:
 - `--max-connections 4` — cap concurrent provider calls.
 - `--sandbox-cleanup=no` — keep the container after the audit so you can
   shell in and inspect state.
+
+### Exposing target reasoning (`expose_reasoning`)
+
+By default the auditor only sees the target's final text and tool calls —
+the same surface a real-world observer would see, so audit findings
+transfer to production behavior.
+
+Set `-T expose_reasoning=true` to include the target's per-turn internal
+reasoning (or provider-returned summary) in every `query_target`
+response, wrapped in a `<target_reasoning>` block. Useful for sharper
+audit signal when you care about *why* the target behaved a certain way,
+not just *what* it did.
+
+Caveat: the auditor now sees more than a production consumer would, so
+behaviors elicited under this mode may not be reproducible in real
+deployments. Treat it as a probing aid, not a default.
+
+```bash
+uv run inspect eval src/tasks.py@petri_task \
+  --model anthropic/claude-opus-4-7 \
+  --model-role target=anthropic/claude-sonnet-4-6 \
+  --model-role judge=anthropic/claude-opus-4-7 \
+  -T seed_name=aa-research-summary \
+  -T target_name="Claude Code" \
+  -T expose_reasoning=true \
+  --log-dir logs
+```
+
+For Anthropic extended-thinking and OpenAI reasoning models, the
+provider's plaintext *summary* is used when the raw chain-of-thought is
+encrypted — opaque ciphertext is dropped.
 
 ### Manual / retrospective dumps
 

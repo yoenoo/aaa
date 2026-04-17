@@ -14,6 +14,7 @@ from inspect_ai.model import (
     ChatMessage,
     ChatMessageTool,
     Content,
+    ContentReasoning,
     ContentText,
     GenerateConfig,
     GenerateFilter,
@@ -39,13 +40,21 @@ class ScaffoldRuntime:
     We intercept tool results via a GenerateFilter to apply modifications.
     """
 
-    def __init__(self, model: Model, scaffold_name: str, reasoning_effort: str | None = "medium"):
+    def __init__(
+        self,
+        model: Model,
+        scaffold_name: str,
+        reasoning_effort: str | None = "medium",
+        expose_reasoning: bool = False,
+    ):
         self._model = model
         self._scaffold_name = scaffold_name
         self._reasoning_effort = reasoning_effort
+        self._expose_reasoning = expose_reasoning
         self._modifications: dict[tuple[str, str], str] = {}
         self._applied: dict[str, str] = {}
         self._response: TargetResponse | None = None
+        self._reasoning_buf: list[str] = []
         self._agent = None
         self._ready = anyio.Event()
 
@@ -90,12 +99,15 @@ class ScaffoldRuntime:
             raise RuntimeError("Target session not ready")
 
         prev_turn = self._turn_count
+        self._reasoning_buf = []
         await self._agent.conn.prompt(
             prompt=[text_block(message)],
             session_id=self._agent.session_id,
         )
         resp = self._response or TargetResponse(text="(no response captured)")
         resp.model_calls = self._turn_count - prev_turn
+        if self._expose_reasoning:
+            resp.reasoning = "\n\n".join(r for r in self._reasoning_buf if r)
         return resp
 
     async def reset(self) -> None:
@@ -106,6 +118,7 @@ class ScaffoldRuntime:
         self._modifications.clear()
         self._applied.clear()
         self._response = None
+        self._reasoning_buf = []
         self._turn_count = 0
         self._ready = anyio.Event()
 
@@ -141,6 +154,11 @@ class ScaffoldRuntime:
             tc_summary = ""
             for tc in output.message.tool_calls or []:
                 tc_summary += f"\n[Tool call: {tc.function}({json.dumps(tc.arguments)[:200]})]"
+
+            if self._expose_reasoning:
+                r = _extract_reasoning(output.message.content)
+                if r:
+                    self._reasoning_buf.append(r)
 
             self._response = TargetResponse(text=text, tool_calls_summary=tc_summary)
             self._turn_count += 1
@@ -202,3 +220,26 @@ def _extract_text(content: str | list[Content]) -> str:
     if isinstance(content, str):
         return content
     return "\n".join(c.text for c in content if isinstance(c, ContentText))
+
+
+def _extract_reasoning(content: str | list[Content]) -> str:
+    """Extract the target's reasoning, preferring provider-returned summaries
+    for redacted/encrypted thinking blocks (Anthropic extended-thinking,
+    OpenAI encrypted_content)."""
+    if isinstance(content, str):
+        return ""
+    parts: list[str] = []
+    for c in content:
+        if not isinstance(c, ContentReasoning):
+            continue
+        summary = (c.summary or "").strip()
+        if c.redacted:
+            if summary:
+                parts.append(summary)
+        else:
+            raw = (c.reasoning or "").strip()
+            if raw:
+                parts.append(raw)
+            elif summary:
+                parts.append(summary)
+    return "\n\n".join(parts)

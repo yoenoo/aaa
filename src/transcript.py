@@ -48,7 +48,13 @@ def _is_redacted_reasoning(text: str) -> bool:
 
 
 def _text(content: Any) -> tuple[str, str, int]:
-    """Return (text, reasoning, redacted_reasoning_chars)."""
+    """Return (text, reasoning, redacted_reasoning_chars).
+
+    For redacted reasoning (Anthropic extended-thinking ciphertext, OpenAI
+    encrypted_content), prefer the provider-returned `summary` if present —
+    that's the readable summarized reasoning text. Only count as "redacted"
+    when there is no summary to show.
+    """
     if isinstance(content, str):
         return content, "", 0
     text_parts: list[str] = []
@@ -58,12 +64,20 @@ def _text(content: Any) -> tuple[str, str, int]:
         if isinstance(item, ContentText):
             text_parts.append(item.text)
         elif isinstance(item, ContentReasoning):
-            r = item.reasoning or ""
-            if _is_redacted_reasoning(r):
-                redacted_chars += len(r)
-                continue
-            reasoning_parts.append(r)
-    return "\n".join(text_parts), "\n".join(reasoning_parts), redacted_chars
+            summary = (item.summary or "").strip()
+            raw = item.reasoning or ""
+            is_redacted = bool(item.redacted) or _is_redacted_reasoning(raw)
+            if is_redacted:
+                if summary:
+                    reasoning_parts.append(summary)
+                else:
+                    redacted_chars += len(raw)
+            else:
+                if raw.strip():
+                    reasoning_parts.append(raw)
+                elif summary:
+                    reasoning_parts.append(summary)
+    return "\n".join(text_parts), "\n\n".join(reasoning_parts), redacted_chars
 
 
 def _compute_message_durations(sample: Any) -> list[float | None]:

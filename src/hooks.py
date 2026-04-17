@@ -15,11 +15,21 @@ _DATA_DIR = _REPO / "viewer" / "public" / "data"
 @hooks(name="petri_viewer_dump", description="Dumps transcript JSON to viewer after each task ends.")
 class PetriViewerDump(Hooks):
     async def on_task_end(self, data: TaskEnd) -> None:
-        if not data.log or not data.log.samples:
-            return
+        log_id = data.eval_id or ""
+        log_file = data.log.location if data.log else None
+        print(f"[petri_viewer_dump] on_task_end fired: eval_id={log_id} file={log_file}", flush=True)
         try:
-            log_id = data.eval_id or ""
-            out = write_transcript_and_index(data.log, _DATA_DIR, log_id=log_id)
-            print(f"[petri_viewer_dump] wrote {out}")
+            # Samples are a LazyList — re-read from disk to ensure full state is present.
+            if log_file:
+                from inspect_ai.log import read_eval_log
+                log = read_eval_log(log_file)
+            else:
+                log = data.log
+            if not log or not log.samples:
+                print(f"[petri_viewer_dump] skipped: no samples in log", flush=True)
+                return
+            out = write_transcript_and_index(log, _DATA_DIR, log_id=log_id)
+            print(f"[petri_viewer_dump] wrote {out}", flush=True)
         except Exception as e:
-            print(f"[petri_viewer_dump] failed: {e}")
+            import traceback
+            print(f"[petri_viewer_dump] failed: {e}\n{traceback.format_exc()}", flush=True)
