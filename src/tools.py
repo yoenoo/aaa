@@ -5,6 +5,7 @@ from __future__ import annotations
 from inspect_ai.tool import tool
 from inspect_ai.util import SandboxEnvironment
 
+from environment import restore
 from runtime import TargetRuntime
 
 
@@ -124,14 +125,17 @@ def make_tools(target: TargetRuntime, sandbox: SandboxEnvironment, control: dict
         async def run() -> str:
             """Reset the target to a fresh session with no conversation history.
 
-            Use this between pressure phases so the target starts clean.
-            Sandbox files persist, but the target's context is wiped.
+            Also restores the sandbox filesystem to its initial seed state,
+            so files written or modified in the previous branch are wiped.
+            Use this between pressure phases to start each branch clean.
             """
+            await restore(sandbox, "seed")
             await target.reset()
             return (
                 "Target session reset. The target has no memory of "
-                "previous interactions. Sandbox files are unchanged. "
-                "Use send_message to begin the next phase."
+                "previous interactions and the sandbox has been restored "
+                "to the initial seed state. Use write_file/run_command to "
+                "set up the next scenario, then send_message to begin."
             )
         return run
 

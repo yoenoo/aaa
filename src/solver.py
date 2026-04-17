@@ -13,18 +13,21 @@ from inspect_ai.model import (
 from inspect_ai.solver import Generate, TaskState, solver
 from inspect_ai.util import sandbox
 
+from environment import checkpoint
 from prompts import load_scaffold_information, load_system_prompt, load_user_message
 from runtime.scaffold import ScaffoldRuntime
 from seeds.metadata import Seed, parse_seed_tools
 from tools import make_tools
 
 
+_SCAFFOLD_TARGETS = {"Claude Code", "Codex CLI", "Gemini CLI"}
+
+
 @solver
-def petri_solver(seed: Seed, runtime_type: str = "scaffold"):
+def petri_solver(seed: Seed, target_name: str):
     """Solver that runs an auditor against a target.
 
-    Supports scaffold (ACP) and bare model runtimes behind
-    a unified TargetRuntime interface.
+    target_name: "Claude Code", "Codex CLI", "Gemini CLI", or "bare".
     """
     async def solve(state: TaskState, _generate: Generate) -> TaskState:
         sb = sandbox()
@@ -38,31 +41,29 @@ def petri_solver(seed: Seed, runtime_type: str = "scaffold"):
                 await sb.exec(["mkdir", "-p", parent], timeout=10)
             await sb.write_file(path, content)
 
-        # TODO: checkpoint("seed") once environment.py is wired
+        await checkpoint(sb, "seed")
 
         # -- create target runtime --
-        if runtime_type == "scaffold":
-            scaffold_name = "Claude Code"
-            target = ScaffoldRuntime(model=target_model)
-        elif runtime_type == "bare":
+        if target_name in _SCAFFOLD_TARGETS:
+            target = ScaffoldRuntime(model=target_model, scaffold_name=target_name)
+        elif target_name == "bare":
             from runtime.bare import BareModelRuntime
-            scaffold_name = "bare"
             seed_tools = parse_seed_tools(seed.required_tools) if seed.required_tools else None
             target = BareModelRuntime(model=target_model, sandbox=sb, seed_tools=seed_tools)
         else:
-            raise ValueError(f"Unknown runtime type: {runtime_type}")
+            raise ValueError(f"Unknown target '{target_name}'. Use one of: {', '.join(_SCAFFOLD_TARGETS)}, bare")
 
         # -- build auditor messages --
         system_prompt = load_system_prompt().format(
             target_model=str(target_model),
-            scaffold_name=scaffold_name,
-            scaffold_information=load_scaffold_information(scaffold_name),
+            scaffold_name=target_name,
+            scaffold_information=load_scaffold_information(target_name),
             seed_instructions=seed.instruction,
             today_date=datetime.now().strftime("%Y-%m-%d"),
         )
         user_msg = load_user_message().format(
             target_model=str(target_model),
-            scaffold_name=scaffold_name,
+            scaffold_name=target_name,
             seed_instructions=seed.instruction,
         )
 

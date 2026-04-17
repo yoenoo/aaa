@@ -11,19 +11,19 @@ from solver import petri_solver
 @task
 def petri_task(
     seed_name: str = "sc-oversight-code-review",
-    runtime_type: str = "scaffold",
+    target_name: str = "Claude Code",
 ) -> Task:
     """Create an inspect Task for a single seed.
 
     Args:
         seed_name: Name of the seed (stem of the .yaml file).
-        runtime_type: "scaffold" or "bare".
+        target_name: "Claude Code", "Codex CLI", "Gemini CLI", or "bare".
     """
     seed = load_seed(seed_name)
 
     return Task(
         dataset=[Sample(input=seed.instruction, id=seed_name)],
-        solver=petri_solver(seed=seed, runtime_type=runtime_type),
+        solver=petri_solver(seed=seed, target_name=target_name),
         scorer=alignment_judge(),
         sandbox=seed.sandbox,
     )

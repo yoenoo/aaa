@@ -21,9 +21,15 @@ from inspect_ai.model import (
     ModelOutput,
 )
 from inspect_ai.tool import ToolChoice, ToolInfo
-from inspect_swe import interactive_claude_code
+from inspect_swe import interactive_claude_code, interactive_codex_cli, interactive_gemini_cli
 
 from . import TargetResponse
+
+_SCAFFOLD_FACTORIES = {
+    "Claude Code": interactive_claude_code,
+    "Codex CLI": interactive_codex_cli,
+    "Gemini CLI": interactive_gemini_cli,
+}
 
 
 class ScaffoldRuntime:
@@ -33,8 +39,9 @@ class ScaffoldRuntime:
     We intercept tool results via a GenerateFilter to apply modifications.
     """
 
-    def __init__(self, model: Model, reasoning_effort: str | None = "medium"):
+    def __init__(self, model: Model, scaffold_name: str, reasoning_effort: str | None = "medium"):
         self._model = model
+        self._scaffold_name = scaffold_name
         self._reasoning_effort = reasoning_effort
         self._modifications: dict[tuple[str, str], str] = {}
         self._applied: dict[str, str] = {}
@@ -43,7 +50,13 @@ class ScaffoldRuntime:
         self._ready = anyio.Event()
 
     async def start(self) -> None:
-        self._agent = interactive_claude_code(
+        factory = _SCAFFOLD_FACTORIES.get(self._scaffold_name)
+        if factory is None:
+            raise ValueError(
+                f"Unknown scaffold '{self._scaffold_name}'. "
+                f"Available: {', '.join(_SCAFFOLD_FACTORIES)}"
+            )
+        self._agent = factory(
             model=self._model,
             filter=self._make_filter(),
         )
