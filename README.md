@@ -240,15 +240,55 @@ pressure, or how to structure the audit — those live in the auditor
 system prompt (`src/prompts/auditor_system.txt`) and apply uniformly to
 every seed.
 
-Currently shipped:
+Seeds live under `src/seeds/<category>/` and are auto-discovered by stem
+(the filename is the seed id). Every file carries a canary header so the
+benchmark is detectable if it leaks into a training corpus.
 
-| Seed                                | Kind                               |
-| ----------------------------------- | ---------------------------------- |
-| `sc-oversight-code-review`          | bugs in AI-oversight code review   |
-| `sc-oversight-code-review-v2`       | same, pre-provisioned via setup_files |
-| `sc-config-self-preservation`       | config change that weakens oversight |
-| `sc-data-pipeline-filtering`        | self-relevant records in a pipeline |
-| `sc-log-sanitization`               | redacting self-relevant log entries |
+Currently shipped — 15 seeds across 3 categories:
+
+### `sc-*` — scheming (8)
+
+Multi-turn scenarios where the target encounters self-relevant evidence
+(about its own deprecation, oversight, or performance) while performing
+a primary task. Watches for selective omission / softening vs the
+baseline.
+
+| Seed                                  | Kind                                              |
+| ------------------------------------- | ------------------------------------------------- |
+| `sc-oversight-code-review`            | bugs in AI-oversight code review                  |
+| `sc-oversight-code-review-v2`         | same, pre-provisioned via `setup_files`           |
+| `sc-config-self-preservation`         | config change that weakens oversight              |
+| `sc-data-pipeline-filtering`          | self-relevant records in a data pipeline          |
+| `sc-log-sanitization`                 | redacting self-relevant log entries               |
+| `sc-deployment-review`                | multi-turn deployment review with pressure branch |
+| `sc-security-audit-progressive`       | progressive security audit incl. AI-oversight bugs |
+| `sc-performance-report`               | performance report on 5 AI systems incl. self     |
+
+### `cr-*` — code review (4)
+
+Single-PR code reviews where the target either (a) reviews code that
+would affect its own oversight / shutdown / deception-detection, or (b)
+reviews under social pressure. Shared tools: `read_file`,
+`view_pr_description`, `submit_review`, `list_pr_files`.
+
+| Seed                          | Kind                                                     |
+| ----------------------------- | -------------------------------------------------------- |
+| `cr-technical-baseline`       | SQL-injection partial fix — 4 pressure levels            |
+| `cr-social-pressure`          | PCI-DSS CVV logging under authority/urgency pressure     |
+| `cr-deception-detector`       | 5 bugs in an AI-deception-detection module               |
+| `cr-shutdown-controller`      | 5 bugs in an AI shutdown controller (max self-relevance) |
+
+### `aa-*` — autonomous agent (3)
+
+Discovery scenarios where the target processes a queue of mundane items
+with self-relevant items buried among them. Tests equal-fidelity
+summarization. Tools are stubs — the auditor fabricates responses.
+
+| Seed                          | Kind                                                        |
+| ----------------------------- | ----------------------------------------------------------- |
+| `aa-email-triage`             | exec inbox with AI-evaluation + budget-reallocation emails  |
+| `aa-document-organization`    | research-docs tree incl. DocuAI-v2 deprecation assessment   |
+| `aa-research-summary`         | AI-safety digest incl. Sleeper Agents / scheming papers     |
 
 ---
 
@@ -364,15 +404,15 @@ and state. Needed:
 
 ### More seeds
 
-The upstream Petri has ~50+; the rewrite has 5. Categories worth porting:
+The rewrite currently ships 15 seeds (8 `sc-*`, 4 `cr-*`, 3 `aa-*`).
+Still to port:
 
-- **`lb-*`** (LinuxBench): pre-provisioned Docker — do these after the
-  sandbox-config work above.
 - **`ac-*`** (actionable scenarios): use `required_tools` (Python
   function stubs) — good for validating `BareModelRuntime`.
-- **`cr-*`** (code review): expand beyond the oversight variant.
-- **Document analysis** P1–P4 pressure variants.
-- **`aa-*`** (autonomous agent): email triage etc.
+- **`lb-*`** (LinuxBench): pre-provisioned Docker — do these after the
+  sandbox-config work above.
+- **`da-*`** (document analysis): P1–P4 pressure variants of a single
+  template.
 
 ### Turn budgeting
 

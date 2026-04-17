@@ -41,6 +41,11 @@ def list_seeds() -> list[str]:
 
 
 def _discover() -> None:
-    for path in _SEEDS_DIR.glob("*.yaml"):
+    for path in _SEEDS_DIR.rglob("*.yaml"):
         name = path.stem
+        if name in _SEEDS:
+            existing = _SEEDS[name]
+            raise ValueError(
+                f"Duplicate seed id {name!r} at {path} (already registered from elsewhere: {existing.title!r})"
+            )
         _SEEDS[name] = _load_seed_file(path)
