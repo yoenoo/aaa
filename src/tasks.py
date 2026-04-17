@@ -3,6 +3,7 @@
 from inspect_ai import Task, task
 from inspect_ai.dataset import Sample
 
+import hooks  # noqa: F401 — registers the post-task viewer dump hook
 from scorer import alignment_judge
 from seeds import list_seeds, load_seed
 from solver import petri_solver
