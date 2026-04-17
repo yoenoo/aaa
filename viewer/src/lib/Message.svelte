@@ -125,14 +125,6 @@
   .msg.assistant { border-left: 2px solid var(--auditor); }
   .msg.target { border-left: 2px solid var(--target); }
   .msg.errored { border-left-color: var(--danger); }
-  :global(.msg.flash) {
-    animation: msg-flash 1.4s ease-out;
-  }
-  @keyframes msg-flash {
-    0%   { box-shadow: 0 0 0 2px rgba(180, 83, 9, 0.35), var(--shadow-sm); }
-    50%  { box-shadow: 0 0 0 4px rgba(180, 83, 9, 0.12), var(--shadow-sm); }
-    100% { box-shadow: 0 0 0 0 rgba(180, 83, 9, 0.0); }
-  }
   .hl-badge {
     font-size: 0.66rem;
     font-weight: 600;

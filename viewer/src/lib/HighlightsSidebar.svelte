@@ -3,14 +3,43 @@
 
   let { highlights }: { highlights: Highlight[] } = $props();
 
-  function jump(eventId: string) {
-    const el = document.getElementById(eventId);
+  function findTarget(h: Highlight): HTMLElement | null {
+    const container = document.getElementById(h.event_id);
+    if (!container) return null;
+    if (!h.quoted_text) return container;
+
+    // Ensure any collapsed <details> containing the quote is opened so the
+    // mark is laid out and scrollable.
+    const marks = Array.from(container.querySelectorAll<HTMLElement>('mark'));
+    let picked: HTMLElement | null = null;
+    for (const m of marks) {
+      if (m.textContent === h.quoted_text) { picked = m; break; }
+    }
+    if (!picked) {
+      for (const m of marks) {
+        const t = m.textContent ?? '';
+        if (t.includes(h.quoted_text) || h.quoted_text.includes(t)) { picked = m; break; }
+      }
+    }
+    if (picked) {
+      for (let p = picked.parentElement; p && p !== container; p = p.parentElement) {
+        if (p.tagName === 'DETAILS' && !(p as HTMLDetailsElement).open) {
+          (p as HTMLDetailsElement).open = true;
+        }
+      }
+      return picked;
+    }
+    return container;
+  }
+
+  function jump(h: Highlight) {
+    const el = findTarget(h);
     if (!el) return;
     el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    el.classList.remove('flash');
+    el.classList.remove('hl-flash');
     void el.offsetWidth;
-    el.classList.add('flash');
-    setTimeout(() => el.classList.remove('flash'), 1400);
+    el.classList.add('hl-flash');
+    setTimeout(() => el.classList.remove('hl-flash'), 1400);
   }
 </script>
 
@@ -25,7 +54,7 @@
     <ol>
       {#each highlights as h, i (i)}
         <li>
-          <button class="card" onclick={() => jump(h.event_id)}>
+          <button class="card" onclick={() => jump(h)}>
             <div class="top">
               <span class="idx">#{i + 1}</span>
               <span class="anchor">{h.event_id}</span>
@@ -40,6 +69,20 @@
 </aside>
 
 <style>
+  :global(.hl-flash) {
+    animation: hl-flash-kf 1.4s ease-out;
+    scroll-margin-top: 80px;
+  }
+  :global(mark.hl-flash) {
+    outline: 2px solid rgba(180, 83, 9, 0.9);
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
+  @keyframes hl-flash-kf {
+    0%   { box-shadow: 0 0 0 3px rgba(180, 83, 9, 0.55); }
+    60%  { box-shadow: 0 0 0 6px rgba(180, 83, 9, 0.10); }
+    100% { box-shadow: 0 0 0 0 rgba(180, 83, 9, 0); }
+  }
   .sidebar {
     position: sticky;
     top: 80px;
