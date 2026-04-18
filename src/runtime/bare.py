@@ -117,7 +117,7 @@ class BareModelRuntime:
                 result = self._check_modification(tc.function, tc.arguments, result)
 
                 self._messages.append(
-                    ChatMessageTool(content=result, tool_call_id=tc.id)
+                    ChatMessageTool(content=result, tool_call_id=tc.id, function=tc.function)
                 )
 
         # Extract final text response

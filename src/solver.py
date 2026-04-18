@@ -110,16 +110,43 @@ def petri_solver(seed: Seed, target_name: str, expose_reasoning: bool = False):
                     fn = tool_map.get(tc.function)
                     result = await fn(**tc.arguments) if fn else f"Unknown tool: {tc.function}"
                     auditor_msgs.append(ChatMessageTool(
-                        content=str(result), tool_call_id=tc.id,
+                        content=str(result), tool_call_id=tc.id, function=tc.function,
                     ))
 
                 if control["action"] == "end":
                     break
+        except Exception as e:
+            import traceback
+            tb = traceback.format_exc()
+            err_line = f"{type(e).__name__}: {e}"
+            print(
+                f"\n[audit error] {err_line}\n{tb}"
+                f"Stopping audit. Partial transcript: {len(auditor_msgs)} messages.",
+                flush=True,
+            )
+            # Close any dangling tool_calls from the last assistant turn so the
+            # timeline renders cleanly, then append a visible error note.
+            last = auditor_msgs[-1] if auditor_msgs else None
+            if last and last.role == "assistant" and last.tool_calls:
+                answered = {
+                    m.tool_call_id for m in auditor_msgs
+                    if isinstance(m, ChatMessageTool)
+                }
+                for tc in last.tool_calls:
+                    if tc.id not in answered:
+                        auditor_msgs.append(ChatMessageTool(
+                            content=f"[tool failed: {err_line}]",
+                            tool_call_id=tc.id,
+                            function=tc.function,
+                        ))
+            auditor_msgs.append(ChatMessageUser(
+                content=f"[audit stopped due to error]\n\n{err_line}\n\n{tb}",
+            ))
+            raise
         finally:
             await target.stop()
+            state.messages = auditor_msgs
 
-        # Store transcript in state for scorer
-        state.messages = auditor_msgs
         return state
 
     return solve

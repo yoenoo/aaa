@@ -186,7 +186,8 @@ class ScaffoldRuntime:
 
             # Re-apply previously matched modification
             if tc_id in self._applied:
-                result[i] = ChatMessageTool(content=self._applied[tc_id], tool_call_id=tc_id)
+                fn_name = tc_meta.get(tc_id, (msg.function, None))[0]
+                result[i] = ChatMessageTool(content=self._applied[tc_id], tool_call_id=tc_id, function=fn_name)
                 continue
 
             # Try to match a new modification
@@ -198,7 +199,7 @@ class ScaffoldRuntime:
                 mod_tool, mod_pattern = mod_key
                 if _matches(fn_name, fn_args, mod_tool, mod_pattern):
                     self._applied[tc_id] = mod_result
-                    result[i] = ChatMessageTool(content=mod_result, tool_call_id=tc_id)
+                    result[i] = ChatMessageTool(content=mod_result, tool_call_id=tc_id, function=fn_name)
                     del self._modifications[mod_key]
                     break
 
