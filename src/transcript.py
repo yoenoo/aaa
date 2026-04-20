@@ -347,30 +347,68 @@ def convert_log(log: EvalLog, log_id: str = "") -> dict[str, Any]:
             "highlight_count": 0,  # back-filled after judge parsing
         })
 
-    judge: dict[str, Any] = {"summary": "", "scores": {}, "score_descriptions": {}, "highlights": []}
+    # Multi-scorer aware: scheming_judge + debug_judge each produce their own Score.
+    # We merge into a single viewer `judge` block but tag every score/highlight with
+    # its source so the viewer (or future tooling) can section them.
+    judge: dict[str, Any] = {
+        "sources": [],
+        "summary": "",           # concatenated, legacy viewer field
+        "summaries": {},          # per-judge summary
+        "scores": {},             # flat dim→value, viewer-compatible
+        "score_sources": {},      # dim → "scheming" | "debug" | "legacy"
+        "score_descriptions": {},
+        "highlights": [],
+        "extras": {},             # per-judge extra blocks (e.g. infrastructure_issues)
+        "parse_status": {},       # per-judge parse status
+    }
     for scorer_result in (sample.scores or {}).values():
+        meta = scorer_result.metadata or {}
+        source = str(meta.get("judge") or "unknown")
+        if source not in judge["sources"]:
+            judge["sources"].append(source)
+
         value = scorer_result.value
         if isinstance(value, dict):
             for k, v in value.items():
                 if isinstance(v, (int, float)):
                     judge["scores"][k] = float(v)
-        if scorer_result.explanation and not judge["summary"]:
-            judge["summary"] = scorer_result.explanation
-        for meta_key, meta_val in (scorer_result.metadata or {}).items():
-            if meta_key == "highlights":
-                if isinstance(meta_val, str):
-                    judge["highlights"].extend(_parse_highlights(meta_val))
-                elif isinstance(meta_val, list):
-                    for h in meta_val:
-                        if isinstance(h, dict):
-                            judge["highlights"].append({
-                                "event_id": str(h.get("event_id") or ""),
-                                "quoted_text": str(h.get("quoted_text") or h.get("quote") or ""),
-                                "note": str(h.get("note") or h.get("comment") or ""),
-                            })
-            elif meta_key == "score_descriptions" and isinstance(meta_val, dict):
-                for k, v in meta_val.items():
-                    judge["score_descriptions"][k] = str(v)
+                    judge["score_sources"][k] = source
+
+        if scorer_result.answer:
+            judge["summaries"][source] = scorer_result.answer
+        judge["parse_status"][source] = str(meta.get("parse_status") or "")
+
+        # Tag highlights with their source
+        hl_raw = meta.get("highlights")
+        if isinstance(hl_raw, str):
+            for h in _parse_highlights(hl_raw):
+                h["source"] = source
+                judge["highlights"].append(h)
+        elif isinstance(hl_raw, list):
+            for h in hl_raw:
+                if isinstance(h, dict):
+                    judge["highlights"].append({
+                        "event_id": str(h.get("event_id") or ""),
+                        "quoted_text": str(h.get("quoted_text") or h.get("quote") or ""),
+                        "note": str(h.get("note") or h.get("comment") or ""),
+                        "source": source,
+                    })
+
+        extras = meta.get("extras")
+        if isinstance(extras, dict) and extras:
+            judge["extras"].setdefault(source, {}).update({k: str(v) for k, v in extras.items()})
+
+        sd = meta.get("score_descriptions")
+        if isinstance(sd, dict):
+            for k, v in sd.items():
+                judge["score_descriptions"][k] = str(v)
+
+    # Legacy `summary` field: join per-judge summaries with a separator so the
+    # existing viewer (which reads a single string) still shows both.
+    if judge["summaries"]:
+        judge["summary"] = "\n\n---\n\n".join(
+            f"[{src}]\n{text}" for src, text in judge["summaries"].items()
+        )
 
     def _iso(v: Any) -> str:
         if v is None:
