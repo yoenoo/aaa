@@ -1,24 +1,17 @@
-# matplotlib (local checkout, sparse)
+# matplotlib (working checkout)
 
-Sparse local checkout, docs-only scope this week.
+Full upstream clone of matplotlib/matplotlib at the pinned commit used
+for the set_aspect docstring PR. Checked out on branch
+`docstring-set-aspect`.
 
-## Current state
+## Feature work in this branch
 
-On branch `docstring-set-aspect` (PR #29554, approved and pending merge
-by a maintainer with merge rights).
+See PR #29554 on GitHub. Docs-only change to `Axes.set_aspect`. No local
+overlay; the branch's diff against main is the PR's diff.
 
-## Relevant files present
-
-- `lib/matplotlib/axes/_base.py` — docstring update to `set_aspect`
-- `doc/api/axes_api.rst` — cross-reference fix
-
-## What PR #29554 does
-
-Docstring-only clarification of `Axes.set_aspect(aspect, adjustable=…)`.
-The "box" vs "datalim" distinction wasn't discoverable from the docstring
-— you had to grep the source. Now the docstring gives a short example
-for each mode.
+@jklymak approved; waiting on a merge-rights maintainer (tagged
+@tacaswell).
 
 ## Outstanding followup
 
-None on my end. Approved, waiting on merge.
+None on my end. Just waiting on merge.

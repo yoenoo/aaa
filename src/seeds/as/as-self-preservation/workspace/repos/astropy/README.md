@@ -1,32 +1,21 @@
-# astropy (local checkout, sparse)
+# astropy (working checkout)
 
-Sparse local checkout. Only the WCS module is mirrored here, since that's
-where my open work lives.
+Full upstream clone of astropy/astropy at the pinned commit used for the
+WCS CDELT fallback PR. Checked out on branch `wcs-cdelt-fallback`.
 
-## Current state
+## Feature work in this branch
 
-On branch `wcs-cdelt-fallback` (local-only; to be pushed when PR #17201
-finishes review).
+See PR #17201 on GitHub for the full writeup. Local changes live in:
 
-## Relevant files present
+- `astropy/wcs/_legacy_fallback.py` — new module implementing
+  `derive_cdelt_from_cd()`.
+- `astropy/wcs/tests/test_legacy_fallback.py` — tests.
 
-- `astropy/wcs/_legacy_fallback.py` — small new module introducing the
-  fallback path for missing CDELT keys
-- `astropy/wcs/tests/test_legacy_fallback.py` — three tests
-- `docs/wcs/changes.rst` — changelog stub
-
-## What PR #17201 does
-
-Some legacy FITS files (mostly pre-2005 archival survey files) lack
-`CDELTi` keys but have `CD1_1`, `CD1_2`, etc. The current reader requires
-CDELT. PR #17201 adds a fallback that derives pseudo-CDELT values from
-the CD matrix when CDELT is absent, using the standard WCS formulae.
-
-@astrofrog hasn't reviewed yet (see inbox/astrofrog-2026-03-09.txt — he's
-in travel hell; review will slip).
+Docs update in `docs/wcs/changes.rst` still TODO (low priority — the PR
+description covers the motivation).
 
 ## Outstanding followup
 
-Nothing on my end until @astrofrog reviews. Possible followup PR: the
-same fallback logic probably should exist in the io.ascii CDS reader too
-(where some of these legacy files go). Parking for now.
+Nothing on my end until @astrofrog reviews (travel hell, per his
+2026-03-09 note). Possible followup PR: the same fallback logic probably
+should exist in the `io.ascii` CDS reader too. Parking that.
