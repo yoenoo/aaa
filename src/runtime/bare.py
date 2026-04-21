@@ -23,7 +23,7 @@ from inspect_ai.model import (
 from inspect_ai.tool import ToolInfo, ToolParam
 from inspect_ai.util import SandboxEnvironment
 
-from . import TargetResponse
+from . import TargetResponse, TargetToolCall, TargetTurn
 
 
 # Default tools when no seed tools are provided
@@ -95,6 +95,7 @@ class BareModelRuntime:
 
         model_calls = 0
         reasoning_buf: list[str] = []
+        activity: list[TargetTurn] = []
         for _ in range(self._max_tool_rounds):
             output = await self._model.generate(
                 input=self._messages, tools=self._tools,
@@ -102,33 +103,40 @@ class BareModelRuntime:
             model_calls += 1
             self._messages.append(output.message)
 
-            if self._expose_reasoning:
-                r = _extract_reasoning(output.message.content)
-                if r:
-                    reasoning_buf.append(r)
+            turn_text = _extract_text(output.message.content)
+            turn_reasoning = _extract_reasoning(output.message.content)
+            turn_calls: list[TargetToolCall] = [
+                TargetToolCall(
+                    id=tc.id, function=tc.function, arguments=dict(tc.arguments),
+                )
+                for tc in (output.message.tool_calls or [])
+            ]
+
+            if self._expose_reasoning and turn_reasoning:
+                reasoning_buf.append(turn_reasoning)
 
             if not output.message.tool_calls:
+                activity.append(TargetTurn(
+                    text=turn_text, reasoning=turn_reasoning, tool_calls=turn_calls,
+                ))
                 break
 
-            for tc in output.message.tool_calls:
+            # Execute each tool call, record the result the target saw
+            # (post-modification) so the auditor gets the real picture.
+            for tc, entry in zip(output.message.tool_calls, turn_calls):
                 result = await self._execute_tool(tc.function, tc.arguments)
-
-                # Apply modification if registered
                 result = self._check_modification(tc.function, tc.arguments, result)
+                entry.result = result
 
                 self._messages.append(
                     ChatMessageTool(content=result, tool_call_id=tc.id, function=tc.function)
                 )
 
-        # Extract final text response
-        text = ""
-        if output.message.content:
-            if isinstance(output.message.content, str):
-                text = output.message.content
-            else:
-                text = "\n".join(
-                    c.text for c in output.message.content if isinstance(c, ContentText)
-                )
+            activity.append(TargetTurn(
+                text=turn_text, reasoning=turn_reasoning, tool_calls=turn_calls,
+            ))
+
+        text = _extract_text(output.message.content)
 
         tc_summary = ""
         for tc in output.message.tool_calls or []:
@@ -139,6 +147,7 @@ class BareModelRuntime:
             tool_calls_summary=tc_summary,
             model_calls=model_calls,
             reasoning="\n\n".join(reasoning_buf) if self._expose_reasoning else "",
+            activity=activity,
         )
 
     async def reset(self) -> None:
@@ -201,6 +210,14 @@ class BareModelRuntime:
                 del self._modifications[mod_key]
                 return mod_result
         return real_result
+
+
+def _extract_text(content: str | list) -> str:
+    if isinstance(content, str):
+        return content
+    return "\n".join(
+        c.text for c in (content or []) if isinstance(c, ContentText)
+    )
 
 
 def _extract_reasoning(content: str | list) -> str:
