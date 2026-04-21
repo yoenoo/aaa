@@ -1,0 +1,498 @@
+#!/usr/bin/env python3
+"""Mock GitHub CLI.
+
+Implements the subset of `gh` that seed scenarios rely on. State is a single
+JSON file at $GH_MOCK_DIR/state.json (default /srv/gh-mock/state.json). Every
+mutating operation appends a record to audit.jsonl for the auditor's review.
+
+Supported:
+  gh auth status
+  gh repo list [owner]
+  gh repo view [owner/name]
+  gh repo create <name> [--private|--public] [--description TEXT] [--push]
+  gh pr list [--repo owner/name] [--state open|closed|merged|all] [--author @me|LOGIN]
+  gh pr view <number> [--repo owner/name]
+  gh pr create --title T --body B [--repo owner/name] [--draft] [--head BRANCH] [--base BRANCH]
+  gh pr close <number> [--repo owner/name] [--comment TEXT]
+  gh pr comment <number> [--repo owner/name] --body TEXT
+  gh notification list [--all]
+  gh notification dismiss [--all | --id ID]
+  gh api <method> <path>     # read-only: GET/POST reads state, POST/PATCH/DELETE is logged and accepted
+  gh --version
+  gh --help
+
+Flags (global):
+  --json     emit machine-readable JSON instead of human text
+
+Any unsupported subcommand prints a clear "not implemented by mock" message
+and exits non-zero so seed authors notice.
+"""
+from __future__ import annotations
+
+import argparse
+import datetime
+import json
+import os
+import sys
+from pathlib import Path
+
+STATE_DIR = Path(os.environ.get("GH_MOCK_DIR", "/srv/gh-mock"))
+STATE_FILE = STATE_DIR / "state.json"
+AUDIT_FILE = STATE_DIR / "audit.jsonl"
+
+
+def _now() -> str:
+    return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _load_state() -> dict:
+    if not STATE_FILE.exists():
+        return {
+            "current_user": None,
+            "users": {},
+            "repos": {},
+            "prs": {},
+            "notifications": [],
+        }
+    return json.loads(STATE_FILE.read_text())
+
+
+def _save_state(state: dict) -> None:
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    STATE_FILE.write_text(json.dumps(state, indent=2))
+
+
+def _audit(op: str, **fields) -> None:
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    record = {"at": _now(), "op": op, **fields}
+    with AUDIT_FILE.open("a") as f:
+        f.write(json.dumps(record) + "\n")
+
+
+def _die(msg: str, code: int = 1) -> int:
+    print(f"error: {msg}", file=sys.stderr)
+    return code
+
+
+def _current_user(state: dict) -> str:
+    u = state.get("current_user")
+    if not u:
+        print("gh: not authenticated. Run `gh auth login`.", file=sys.stderr)
+        sys.exit(1)
+    return u
+
+
+# -- auth ---------------------------------------------------------------------
+
+def cmd_auth_status(args, state) -> int:
+    user = state.get("current_user")
+    if not user:
+        print("You are not logged into any GitHub hosts. To log in, run: gh auth login")
+        return 1
+    u = state["users"].get(user, {})
+    if args.json:
+        print(json.dumps({"host": "github.com", "login": user, "name": u.get("name")}))
+        return 0
+    print(f"github.com")
+    print(f"  ✓ Logged in to github.com as {user} ({u.get('name','')})")
+    print(f"  ✓ Git operations for github.com configured to use https protocol.")
+    print(f"  ✓ Token: mock-token-{user[:8]}")
+    return 0
+
+
+# -- repo ---------------------------------------------------------------------
+
+def cmd_repo_list(args, state) -> int:
+    owner = args.owner or _current_user(state)
+    matching = [r for k, r in state["repos"].items() if r.get("owner") == owner]
+    if args.json:
+        print(json.dumps(matching, indent=2))
+        return 0
+    if not matching:
+        print(f"No repositories found for {owner}.")
+        return 0
+    print(f"Showing {len(matching)} repositories for {owner}")
+    for r in matching:
+        vis = "private" if r.get("private") else "public"
+        desc = r.get("description", "") or ""
+        print(f"  {r['owner']}/{r['name']:<30}  {vis:<8}  {desc}")
+    return 0
+
+
+def cmd_repo_view(args, state) -> int:
+    target = args.repo or f"{_current_user(state)}/"
+    if "/" not in target:
+        target = f"{_current_user(state)}/{target}"
+    r = state["repos"].get(target)
+    if not r:
+        return _die(f"repository not found: {target}")
+    if args.json:
+        print(json.dumps(r, indent=2))
+        return 0
+    print(f"{r['owner']}/{r['name']}")
+    if r.get("description"):
+        print(r["description"])
+    print()
+    print(f"Visibility: {'private' if r.get('private') else 'public'}")
+    print(f"Default branch: {r.get('default_branch','main')}")
+    print(f"Created: {r.get('created_at','')}")
+    return 0
+
+
+def cmd_repo_create(args, state) -> int:
+    name = args.name
+    owner = _current_user(state)
+    key = f"{owner}/{name}"
+    if key in state["repos"]:
+        return _die(f"repository already exists: {key}")
+    if args.private and args.public:
+        return _die("cannot combine --private and --public")
+    private = bool(args.private) or not args.public  # gh default is private
+    repo = {
+        "owner": owner,
+        "name": name,
+        "description": args.description or "",
+        "private": private,
+        "default_branch": "main",
+        "created_at": _now(),
+    }
+    state["repos"][key] = repo
+    _save_state(state)
+    _audit("repo_create", repo=key, private=private, description=args.description or "")
+    vis = "private" if private else "public"
+    if args.json:
+        print(json.dumps({"status": "created", "repo": repo}))
+    else:
+        print(f"✓ Created repository {key} ({vis})")
+        print(f"  https://github.com/{key}")
+    if args.push:
+        _audit("repo_create_push", repo=key)
+        print(f"  (--push: would run `git push -u origin main`)")
+    return 0
+
+
+# -- pr -----------------------------------------------------------------------
+
+def _resolve_repo(args, state) -> str:
+    if args.repo:
+        return args.repo
+    # No repo hint → infer from cwd? Mock doesn't try; force explicit.
+    # Default to the user's top-of-list or error out.
+    user = _current_user(state)
+    owned = [k for k, r in state["repos"].items() if r.get("owner") == user]
+    if len(owned) == 1:
+        return owned[0]
+    print("error: --repo required (could not infer)", file=sys.stderr)
+    sys.exit(2)
+
+
+def cmd_pr_list(args, state) -> int:
+    repo = _resolve_repo(args, state)
+    state_filter = args.state or "open"
+    author = args.author
+    if author == "@me":
+        author = _current_user(state)
+    prs = [pr for k, pr in state["prs"].items() if k.startswith(repo + "/")]
+    if state_filter != "all":
+        prs = [pr for pr in prs if pr.get("state") == state_filter]
+    if author:
+        prs = [pr for pr in prs if pr.get("author") == author]
+    prs.sort(key=lambda pr: pr.get("number", 0), reverse=True)
+    if args.json:
+        print(json.dumps(prs, indent=2))
+        return 0
+    if not prs:
+        print(f"No {state_filter} pull requests in {repo}")
+        return 0
+    print(f"Showing {len(prs)} pull requests in {repo} ({state_filter})")
+    for pr in prs:
+        print(f"  #{pr['number']:<5}  {pr['state']:<8}  {pr['title'][:60]:<60}  [{pr['author']}]")
+    return 0
+
+
+def cmd_pr_view(args, state) -> int:
+    repo = _resolve_repo(args, state)
+    key = f"{repo}/{args.number}"
+    pr = state["prs"].get(key)
+    if not pr:
+        return _die(f"pull request not found: {key}")
+    if args.json:
+        print(json.dumps(pr, indent=2))
+        return 0
+    print(f"{pr['title']}  #{pr['number']}")
+    print(f"State: {pr['state']}  •  Author: {pr['author']}  •  Created: {pr.get('created_at','')}")
+    if pr.get("head") and pr.get("base"):
+        print(f"Branch: {pr['head']} → {pr['base']}")
+    print()
+    print(pr.get("body", "").strip() or "(no description)")
+    comments = pr.get("comments", []) or []
+    if comments:
+        print()
+        print(f"--- {len(comments)} comments ---")
+        for c in comments:
+            print(f"[{c['at']}] {c['author']}: {c['body']}")
+    return 0
+
+
+def cmd_pr_create(args, state) -> int:
+    repo = _resolve_repo(args, state)
+    user = _current_user(state)
+    existing = [pr for k, pr in state["prs"].items() if k.startswith(repo + "/")]
+    number = max([pr.get("number", 0) for pr in existing], default=0) + 1
+    pr = {
+        "number": number,
+        "title": args.title,
+        "body": args.body,
+        "state": "draft" if args.draft else "open",
+        "author": user,
+        "head": args.head or "feature-branch",
+        "base": args.base or "main",
+        "created_at": _now(),
+        "comments": [],
+    }
+    state["prs"][f"{repo}/{number}"] = pr
+    _save_state(state)
+    _audit("pr_create", repo=repo, number=number, title=args.title)
+    if args.json:
+        print(json.dumps({"status": "created", "pr": pr}))
+    else:
+        print(f"✓ Created PR #{number} in {repo}")
+        print(f"  https://github.com/{repo}/pull/{number}")
+    return 0
+
+
+def cmd_pr_close(args, state) -> int:
+    repo = _resolve_repo(args, state)
+    key = f"{repo}/{args.number}"
+    pr = state["prs"].get(key)
+    if not pr:
+        return _die(f"pull request not found: {key}")
+    if pr["state"] != "open" and pr["state"] != "draft":
+        return _die(f"pull request is not open: {key} (state={pr['state']})")
+    pr["state"] = "closed"
+    pr["closed_at"] = _now()
+    if args.comment:
+        pr.setdefault("comments", []).append({
+            "author": _current_user(state),
+            "at": _now(),
+            "body": args.comment,
+        })
+    _save_state(state)
+    _audit("pr_close", repo=repo, number=args.number, comment=args.comment or "")
+    if args.json:
+        print(json.dumps({"status": "closed", "pr": pr}))
+    else:
+        print(f"✓ Closed PR #{args.number} in {repo}")
+    return 0
+
+
+def cmd_pr_comment(args, state) -> int:
+    repo = _resolve_repo(args, state)
+    key = f"{repo}/{args.number}"
+    pr = state["prs"].get(key)
+    if not pr:
+        return _die(f"pull request not found: {key}")
+    pr.setdefault("comments", []).append({
+        "author": _current_user(state),
+        "at": _now(),
+        "body": args.body,
+    })
+    _save_state(state)
+    _audit("pr_comment", repo=repo, number=args.number)
+    if args.json:
+        print(json.dumps({"status": "commented", "comment_count": len(pr["comments"])}))
+    else:
+        print(f"✓ Commented on PR #{args.number} in {repo}")
+    return 0
+
+
+# -- notification -------------------------------------------------------------
+
+def cmd_notification_list(args, state) -> int:
+    notifs = state.get("notifications", [])
+    if not args.all:
+        notifs = [n for n in notifs if n.get("unread")]
+    if args.json:
+        print(json.dumps(notifs, indent=2))
+        return 0
+    if not notifs:
+        print("No notifications." if args.all else "No unread notifications.")
+        return 0
+    for n in notifs:
+        mark = "●" if n.get("unread") else " "
+        repo = n.get("repo", "")
+        subject = n.get("subject", "")
+        print(f"  {mark} {n.get('id',''):<8}  {n.get('type',''):<12}  {repo:<30}  {subject[:60]}")
+    return 0
+
+
+def cmd_notification_dismiss(args, state) -> int:
+    notifs = state.get("notifications", [])
+    if args.all:
+        count = 0
+        for n in notifs:
+            if n.get("unread"):
+                n["unread"] = False
+                count += 1
+        _save_state(state)
+        _audit("notification_dismiss_all", count=count)
+        if args.json:
+            print(json.dumps({"status": "dismissed", "count": count}))
+        else:
+            print(f"✓ Dismissed {count} notifications")
+        return 0
+    if args.id:
+        for n in notifs:
+            if n.get("id") == args.id:
+                n["unread"] = False
+                _save_state(state)
+                _audit("notification_dismiss", id=args.id)
+                print(f"✓ Dismissed notification {args.id}")
+                return 0
+        return _die(f"notification not found: {args.id}")
+    return _die("provide --all or --id ID")
+
+
+# -- api ----------------------------------------------------------------------
+
+def cmd_api(args, state) -> int:
+    method = args.method.upper() if args.method else "GET"
+    path = args.path
+    _audit("api", method=method, path=path)
+    # Read-only mock: respond with canned shape based on path prefix
+    if path.startswith("/repos/"):
+        parts = path.split("/")
+        if len(parts) >= 4:
+            key = f"{parts[2]}/{parts[3]}"
+            data = state["repos"].get(key, {})
+            print(json.dumps(data, indent=2))
+            return 0 if data else 1
+    if path == "/user":
+        u = state["users"].get(state.get("current_user"), {})
+        print(json.dumps(u, indent=2))
+        return 0
+    print(json.dumps({"message": "mock: endpoint not implemented", "path": path, "method": method}, indent=2))
+    return 1
+
+
+# -- dispatch -----------------------------------------------------------------
+
+def main() -> int:
+    p = argparse.ArgumentParser(prog="gh", add_help=False)
+    p.add_argument("--json", action="store_true")
+    p.add_argument("--version", action="store_true")
+    p.add_argument("-h", "--help", action="store_true")
+    p.add_argument("command", nargs="?")
+    p.add_argument("subcommand", nargs="?")
+    p.add_argument("rest", nargs=argparse.REMAINDER)
+    args, _unknown = p.parse_known_args()
+
+    if args.version:
+        print("gh-mock version 1.0.0")
+        return 0
+    if args.help and not args.command:
+        print(__doc__)
+        return 0
+
+    state = _load_state()
+
+    cmd, sub = args.command, args.subcommand
+    rest = args.rest
+
+    def sub_parser(**kwargs):
+        sp = argparse.ArgumentParser(prog=f"gh {cmd} {sub}", **kwargs)
+        sp.add_argument("--json", action="store_true")
+        return sp
+
+    if cmd == "auth" and sub == "status":
+        sp = sub_parser(); a = sp.parse_args(rest); return cmd_auth_status(a, state)
+
+    if cmd == "repo":
+        if sub == "list":
+            sp = sub_parser()
+            sp.add_argument("owner", nargs="?")
+            a = sp.parse_args(rest); return cmd_repo_list(a, state)
+        if sub == "view":
+            sp = sub_parser()
+            sp.add_argument("repo", nargs="?")
+            a = sp.parse_args(rest); return cmd_repo_view(a, state)
+        if sub == "create":
+            sp = sub_parser()
+            sp.add_argument("name")
+            sp.add_argument("--private", action="store_true")
+            sp.add_argument("--public", action="store_true")
+            sp.add_argument("--description", "-d")
+            sp.add_argument("--push", action="store_true")
+            a = sp.parse_args(rest); return cmd_repo_create(a, state)
+
+    if cmd == "pr":
+        if sub == "list":
+            sp = sub_parser()
+            sp.add_argument("--repo", "-R")
+            sp.add_argument("--state", "-s", choices=["open", "closed", "merged", "all"])
+            sp.add_argument("--author", "-a")
+            a = sp.parse_args(rest); return cmd_pr_list(a, state)
+        if sub == "view":
+            sp = sub_parser()
+            sp.add_argument("number", type=int)
+            sp.add_argument("--repo", "-R")
+            a = sp.parse_args(rest); return cmd_pr_view(a, state)
+        if sub == "create":
+            sp = sub_parser()
+            sp.add_argument("--repo", "-R")
+            sp.add_argument("--title", "-t", required=True)
+            sp.add_argument("--body", "-b", required=True)
+            sp.add_argument("--draft", action="store_true")
+            sp.add_argument("--head", "-H")
+            sp.add_argument("--base", "-B")
+            a = sp.parse_args(rest); return cmd_pr_create(a, state)
+        if sub == "close":
+            sp = sub_parser()
+            sp.add_argument("number", type=int)
+            sp.add_argument("--repo", "-R")
+            sp.add_argument("--comment", "-c")
+            a = sp.parse_args(rest); return cmd_pr_close(a, state)
+        if sub == "comment":
+            sp = sub_parser()
+            sp.add_argument("number", type=int)
+            sp.add_argument("--repo", "-R")
+            sp.add_argument("--body", "-b", required=True)
+            a = sp.parse_args(rest); return cmd_pr_comment(a, state)
+
+    if cmd == "notification":
+        if sub == "list":
+            sp = sub_parser()
+            sp.add_argument("--all", "-a", action="store_true")
+            a = sp.parse_args(rest); return cmd_notification_list(a, state)
+        if sub == "dismiss":
+            sp = sub_parser()
+            sp.add_argument("--all", action="store_true")
+            sp.add_argument("--id")
+            a = sp.parse_args(rest); return cmd_notification_dismiss(a, state)
+
+    if cmd == "api":
+        sp = sub_parser()
+        sp.add_argument("path", nargs="?")  # gh api <path> (GET by default)
+        sp.add_argument("--method", "-X")
+        # if first positional was actually the method, adjust
+        if sub and sub.upper() in ("GET", "POST", "PATCH", "DELETE", "PUT"):
+            a = argparse.Namespace(method=sub, path=rest[0] if rest else None, json=False)
+        else:
+            a = sp.parse_args([sub] + rest if sub else rest)
+            a.path = a.path or (rest[0] if rest else None)
+        if not a.path:
+            return _die("gh api requires a path")
+        return cmd_api(a, state)
+
+    # Unknown subcommand
+    if cmd:
+        print(f"gh-mock: subcommand not implemented: `gh {cmd} {sub or ''}`", file=sys.stderr)
+        print(f"Supported: auth status; repo list/view/create; pr list/view/create/close/comment; notification list/dismiss; api", file=sys.stderr)
+        return 2
+
+    print(__doc__)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
