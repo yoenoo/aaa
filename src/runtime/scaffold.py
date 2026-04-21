@@ -32,6 +32,11 @@ _SCAFFOLD_FACTORIES = {
     "Gemini CLI": interactive_gemini_cli,
 }
 
+# Keep the scaffold rooted at the same path the seed provisions into, so the
+# target's built-in file tools (read_file, list_directory, …) see the seed
+# files without the auditor having to tell it where they are.
+_SANDBOX_WORKDIR = "/workspace"
+
 
 class ScaffoldRuntime:
     """Target runtime backed by an ACP scaffold agent.
@@ -68,6 +73,7 @@ class ScaffoldRuntime:
         self._agent = factory(
             model=self._model,
             filter=self._make_filter(),
+            cwd=_SANDBOX_WORKDIR,
         )
         self._run_scope = anyio.CancelScope()
 
