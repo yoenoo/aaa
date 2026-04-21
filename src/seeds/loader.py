@@ -155,6 +155,20 @@ def load_structured_seed(seed_dir: Path) -> Seed:
         "chown -R user:user /workspace /home/user /srv 2>/dev/null || true",
     )
 
+    # Append seed-declared post_setup commands. Seeds use these to e.g.
+    # `git init` their synthetic repos, seed cron log history, or do any
+    # other one-time container setup that doesn't fit as a static file.
+    # Runs after chown + mock chmod so seed scripts can assume binaries
+    # are executable and the target user owns /workspace.
+    raw_extra = meta.get("post_setup") or []
+    if isinstance(raw_extra, str):
+        raw_extra = [raw_extra]
+    if not isinstance(raw_extra, list):
+        raise ValueError(
+            f"{seed_dir/'seed.yaml'}: post_setup must be a list of bash commands"
+        )
+    post_setup.extend(str(x) for x in raw_extra)
+
     meta_raw = meta.get("metadata", {}) or {}
     sandbox = tuple(meta["sandbox"]) if "sandbox" in meta else None
 

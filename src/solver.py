@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import sys
+import time
 from datetime import datetime
 
 from inspect_ai.model import (
@@ -99,10 +101,24 @@ def petri_solver(seed: Seed, scaffold: str, expose_reasoning: bool = False):
 
         # -- auditor loop --
         max_turns = seed.metadata.max_model_turns
+        loop_started = time.monotonic()
         try:
-            for _ in range(max_turns):
+            for i in range(max_turns):
+                turn_start = time.monotonic()
                 output = await auditor_model.generate(auditor_msgs, tools=tools)
                 auditor_msgs.append(output.message)
+
+                tc_names = [tc.function for tc in output.message.tool_calls or []]
+                # One-line progress to stderr — flushed — so operators can
+                # `tail -f` the run without waiting for the .eval log to
+                # land. `log_realtime: true` writes samples at the end;
+                # this fills the gap for long-running audits.
+                print(
+                    f"[petri {i+1}/{max_turns} t+{time.monotonic()-loop_started:6.1f}s "
+                    f"Δ{time.monotonic()-turn_start:5.1f}s] "
+                    f"auditor: {', '.join(tc_names) or '(no tool calls)'}",
+                    file=sys.stderr, flush=True,
+                )
 
                 if not output.message.tool_calls:
                     auditor_msgs.append(ChatMessageUser(

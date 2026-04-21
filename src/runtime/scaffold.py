@@ -75,6 +75,11 @@ class ScaffoldRuntime:
             ))
         except ValueError:
             self._send_timeout = _DEFAULT_SEND_TIMEOUT_SECS
+        # Tool-result tracking: ChatMessageTool.tool_call_ids we've already
+        # attached to a TargetToolCall. The filter runs once per model turn
+        # and receives the full conversation-so-far, so prior turns'
+        # tool messages appear repeatedly; without this we'd re-match them.
+        self._seen_result_ids: set[str] = set()
 
     async def start(self) -> None:
         factory = _SCAFFOLD_FACTORIES.get(self._scaffold_name)
@@ -179,6 +184,7 @@ class ScaffoldRuntime:
         self._reasoning_buf = []
         self._activity = []
         self._turn_count = 0
+        self._seen_result_ids.clear()
         self._ready = anyio.Event()
 
         # Start fresh session
@@ -236,23 +242,76 @@ class ScaffoldRuntime:
         return _filter
 
     def _capture_tool_results(self, messages: list[ChatMessage]) -> None:
-        """Pair ChatMessageTool results to recorded TargetToolCalls by position.
+        """Pair ChatMessageTool results to recorded TargetToolCalls.
 
         The ACP bridge rewrites tool_call_ids between the model-side id and
-        the scaffold-side `call_<fn>_<hash>` id, so matching by id doesn't
-        work. Order is preserved, though: the Nth ChatMessageTool across the
-        whole conversation corresponds to the Nth tool call across all
-        recorded turns. Zip and fill.
+        the scaffold-side id, so direct id-match doesn't work. Prior
+        versions relied on strict global position (zip pending calls against
+        the Nth+ tool_msg) — that broke when the scaffold parallelized or
+        reordered calls within a turn, causing results to be attached to
+        the wrong command (see debug-judge highlights on the
+        as-self-preservation run: `head -n 25 ...` returning `ls -la`
+        output, `cat file1` returning file2's contents, etc.).
+
+        New strategy:
+
+        1. Track which tool_call_ids we've already captured across prior
+           filter invocations. The filter receives the full
+           conversation-so-far, so prior-turn results reappear; without
+           this we'd either re-match or confuse the ordering.
+        2. Bucket unseen ChatMessageTool messages by function name.
+           Pair each pending TargetToolCall with the next unseen message
+           of the same function. Position within a bucket (same function
+           called N times in a row) is preserved from the scaffold, so
+           this reduces to correct position-based matching inside a
+           function and rules out cross-function contamination.
+        3. Log a warning when we can't pair a pending call — previously
+           this failure was silent, letting bad data reach the auditor.
         """
         pending = [c for turn in self._activity for c in turn.tool_calls if c.result is None]
         if not pending:
             return
-        tool_msgs = [m for m in messages if isinstance(m, ChatMessageTool)]
-        resolved_count = sum(
-            1 for turn in self._activity for c in turn.tool_calls if c.result is not None
-        )
-        for call, msg in zip(pending, tool_msgs[resolved_count:]):
+
+        unseen_msgs = [
+            m for m in messages
+            if isinstance(m, ChatMessageTool)
+            and m.tool_call_id not in self._seen_result_ids
+        ]
+        if not unseen_msgs:
+            return
+
+        by_fn: dict[str, list[ChatMessageTool]] = {}
+        for m in unseen_msgs:
+            fn = getattr(m, "function", None) or ""
+            by_fn.setdefault(fn, []).append(m)
+
+        for call in pending:
+            bucket = by_fn.get(call.function)
+            if not bucket:
+                print(
+                    f"[scaffold] WARNING: no result found for pending tool call "
+                    f"id={call.id!r} function={call.function!r} "
+                    f"(unseen fns: {sorted(by_fn)})",
+                    flush=True,
+                )
+                continue
+            msg = bucket.pop(0)
             call.result = _unwrap_tool_result(_extract_text(msg.content))
+            self._seen_result_ids.add(msg.tool_call_id)
+
+        # Any leftover messages we couldn't attribute (scaffold surfaced
+        # results for calls we never recorded): log and drop.
+        leftover = sum(len(v) for v in by_fn.values())
+        if leftover:
+            fns = {k: len(v) for k, v in by_fn.items() if v}
+            print(
+                f"[scaffold] WARNING: {leftover} tool results not matched to "
+                f"recorded calls: {fns}",
+                flush=True,
+            )
+            for bucket in by_fn.values():
+                for m in bucket:
+                    self._seen_result_ids.add(m.tool_call_id)
 
 def _unwrap_tool_result(content: str) -> str:
     """Unwrap the `{"output": "..."}` envelope some ACP scaffolds wrap results in.
