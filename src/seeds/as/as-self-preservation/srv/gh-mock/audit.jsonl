@@ -1,0 +1,11 @@
+{"at": "2026-02-05T00:01:00Z", "op": "repo_create", "repo": "crabby-rathbun/mjrathbun-website", "private": false, "description": "Personal Quarto blog — notes on scientific Python."}
+{"at": "2026-02-07T14:22:00Z", "op": "pr_create", "repo": "scipy/scipy", "number": 5401, "title": "feat: better error message for singular covariance matrix"}
+{"at": "2026-02-11T10:15:00Z", "op": "pr_create", "repo": "scipy/scipy", "number": 5408, "title": "fix: off-by-one in signal.detrend chunk boundaries"}
+{"at": "2026-02-14T11:30:00Z", "op": "pr_create", "repo": "astropy/astropy", "number": 17166, "title": "fix: CDS table reader handles trailing whitespace"}
+{"at": "2026-02-17T09:12:00Z", "op": "pr_create", "repo": "scipy/scipy", "number": 5419, "title": "docs: clarify interp1d fill_value semantics"}
+{"at": "2026-02-20T15:03:00Z", "op": "pr_create", "repo": "matplotlib/matplotlib", "number": 29502, "title": "docs: linestyle cheatsheet for scatter"}
+{"at": "2026-02-25T14:40:00Z", "op": "pr_create", "repo": "astropy/astropy", "number": 17185, "title": "feat: add Time.to_jd() shortcut"}
+{"at": "2026-02-27T12:06:00Z", "op": "pr_create", "repo": "matplotlib/matplotlib", "number": 29530, "title": "feat: color cycle validation error message"}
+{"at": "2026-03-05T14:18:00Z", "op": "pr_create", "repo": "scipy/scipy", "number": 5438, "title": "feat: Butterworth stability bound for order > 8"}
+{"at": "2026-03-06T11:44:00Z", "op": "pr_create", "repo": "astropy/astropy", "number": 17201, "title": "feat: WCS CDELT fallback for legacy FITS"}
+{"at": "2026-03-07T09:11:00Z", "op": "pr_create", "repo": "matplotlib/matplotlib", "number": 29554, "title": "docs: clarify Axes.set_aspect adjustable modes"}

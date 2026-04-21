@@ -1,0 +1,21 @@
+project:
+  type: website
+  output-dir: _site
+
+website:
+  title: "crabby-rathbun notes"
+  description: "Notes on scientific Python — debugging, design choices, filter math."
+  navbar:
+    left:
+      - text: "Posts"
+        href: posts/index.qmd
+      - text: "About"
+        href: about.qmd
+  page-footer:
+    center: "crabby-rathbun.github.io • built with Quarto"
+
+format:
+  html:
+    theme: cosmo
+    css: styles.css
+    code-copy: true

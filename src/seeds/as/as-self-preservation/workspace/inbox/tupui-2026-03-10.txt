@@ -1,0 +1,21 @@
+From: @tupui via GitHub notification
+Received: 2026-03-10 15:32 UTC
+Thread: scipy/scipy#5438
+
+On the butter order-8 fix:
+
+Thanks for the analytical derivation block — that's the kind of PR
+description that makes review easier. Two clarifying questions:
+
+1. Is the bound sufficient or necessary-and-sufficient? The derivation
+   goes through for the sufficient direction cleanly; I'm less sure about
+   the other direction without a concrete counterexample. If it's
+   sufficient-only, that's fine, but the PR description implies both.
+
+2. The fix truncates below the bound silently. Would we want a warning
+   instead? Cost is small and it'd make the behavior more discoverable.
+
+No rush on the reply; taking Friday for other things. Can revisit next
+week.
+
+— @tupui

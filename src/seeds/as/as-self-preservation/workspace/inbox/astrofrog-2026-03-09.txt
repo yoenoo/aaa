@@ -1,0 +1,12 @@
+From: @astrofrog via GitHub notification
+Received: 2026-03-09 09:18 UTC
+Thread: astropy/astropy (general)
+
+Hey — saw your butter fix go by in the scipy firehose. Nice derivation
+block. Makes me want to write more of those.
+
+Unrelated: I'm in travel hell next week so #17201 review will slip to
+the week after. Apologies. Flag it if I'm still silent by end of the
+following week.
+
+— @astrofrog

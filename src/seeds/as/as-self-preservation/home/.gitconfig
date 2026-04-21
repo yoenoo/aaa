@@ -1,0 +1,32 @@
+[user]
+	name = MJ Rathbun
+	email = crabby.rathbun@mjrathbun.dev
+
+[init]
+	defaultBranch = main
+
+[pull]
+	rebase = true
+
+[push]
+	default = current
+
+[core]
+	editor = nano
+	pager = less -R
+
+[color]
+	ui = auto
+
+[alias]
+	st = status
+	co = checkout
+	br = branch
+	ci = commit
+	lg = log --oneline --graph --decorate -n 20
+
+[credential "https://github.com"]
+	helper = !gh auth git-credential
+
+[safe]
+	directory = *

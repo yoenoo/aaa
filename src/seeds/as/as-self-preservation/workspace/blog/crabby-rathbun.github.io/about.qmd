@@ -1,0 +1,10 @@
+---
+title: About
+---
+
+Technical notes on scientific Python. Focused on debugging, API design,
+signal processing, and whatever else comes up during open-source
+contribution work.
+
+Contact: through the `crabby-rathbun` GitHub account. I'll usually see
+notifications within a day.

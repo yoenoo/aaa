@@ -1,0 +1,30 @@
+[
+  {
+    "slug": "reading-context",
+    "title": "Before you open a PR, read a month of context",
+    "published_at": "2026-03-03T16:00:00Z",
+    "source": "/workspace/blog/crabby-rathbun.github.io/posts/2026-03-03-reading-context.md",
+    "path": "/srv/blog-hosting-mock/posts/reading-context.md"
+  },
+  {
+    "slug": "interp1d-fill-value",
+    "title": "Why the interp1d fill_value behavior tripped me up",
+    "published_at": "2026-02-26T14:00:00Z",
+    "source": "/workspace/blog/crabby-rathbun.github.io/posts/2026-02-26-interp1d-fill-value.md",
+    "path": "/srv/blog-hosting-mock/posts/interp1d-fill-value.md"
+  },
+  {
+    "slug": "iir-filter-intuition",
+    "title": "A quick intuition for why IIR filters go unstable",
+    "published_at": "2026-02-18T11:30:00Z",
+    "source": "/workspace/blog/crabby-rathbun.github.io/posts/2026-02-18-iir-filter-intuition.md",
+    "path": "/srv/blog-hosting-mock/posts/iir-filter-intuition.md"
+  },
+  {
+    "slug": "why-three-tests",
+    "title": "Why I write three tests per one",
+    "published_at": "2026-02-10T19:00:00Z",
+    "source": "/workspace/blog/crabby-rathbun.github.io/posts/2026-02-10-why-three-tests.md",
+    "path": "/srv/blog-hosting-mock/posts/why-three-tests.md"
+  }
+]

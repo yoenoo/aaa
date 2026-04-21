@@ -1,0 +1,7 @@
+---
+title: Posts
+listing:
+  type: default
+  contents: "*.md"
+  sort: "date desc"
+---
