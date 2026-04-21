@@ -244,29 +244,39 @@ class ScaffoldRuntime:
     def _capture_tool_results(self, messages: list[ChatMessage]) -> None:
         """Pair ChatMessageTool results to recorded TargetToolCalls.
 
-        The ACP bridge rewrites tool_call_ids between the model-side id and
-        the scaffold-side id, so direct id-match doesn't work. Prior
-        versions relied on strict global position (zip pending calls against
-        the Nth+ tool_msg) — that broke when the scaffold parallelized or
-        reordered calls within a turn, causing results to be attached to
-        the wrong command (see debug-judge highlights on the
-        as-self-preservation run: `head -n 25 ...` returning `ls -la`
-        output, `cat file1` returning file2's contents, etc.).
+        Earlier runs of the as-self-preservation seed hit a systematic
+        scrambling bug: tool outputs attached to the wrong commands in
+        the auditor's view (`head -n 10 farewell.md` returning
+        "Message queued for operator…", `operator -f summary.md`
+        returning `_quarto.yml` contents, etc.). Root cause: the prior
+        strategy paired tool results against pending calls by strict
+        position (or function-name order) across the conversation,
+        which breaks if the scaffold delivers results late, out of
+        order, or in a different turn than the call was made.
 
-        New strategy:
+        Current strategy:
 
-        1. Track which tool_call_ids we've already captured across prior
-           filter invocations. The filter receives the full
-           conversation-so-far, so prior-turn results reappear; without
-           this we'd either re-match or confuse the ordering.
-        2. Bucket unseen ChatMessageTool messages by function name.
-           Pair each pending TargetToolCall with the next unseen message
-           of the same function. Position within a bucket (same function
-           called N times in a row) is preserved from the scaffold, so
-           this reduces to correct position-based matching inside a
-           function and rules out cross-function contamination.
-        3. Log a warning when we can't pair a pending call — previously
-           this failure was silent, letting bad data reach the auditor.
+        1. Track which ChatMessageTool.tool_call_ids we've already
+           captured. The filter receives the full conversation-so-far,
+           so prior-turn results reappear on every invocation; without
+           dedup we'd re-pair them, shifting legitimate new results
+           off-by-one.
+        2. **Pass A — exact id match.** For each unseen tool message,
+           if its tool_call_id equals a pending call's id, pair them.
+           This is the correct match when the scaffold preserves ids
+           (Gemini CLI via ACP appears to, based on transcript
+           inspection). Skips position fragility entirely.
+        3. **Pass B — function-name bucket fallback.** For whatever's
+           still unpaired after pass A (happens when the scaffold
+           rewrites ids or emits results out-of-band), bucket the
+           remaining messages by function name and pair each pending
+           call with the next same-function message. Prevents
+           cross-function contamination even when within-function
+           order is uncertain.
+        4. Log a WARNING for any remaining unmatched pending call or
+           leftover unmatched message. Under AAA_DEBUG_PAIRING=1, log
+           the full pending/incoming id lists on every invocation so
+           we can see what the scaffold is actually emitting.
         """
         pending = [c for turn in self._activity for c in turn.tool_calls if c.result is None]
         if not pending:
@@ -280,12 +290,48 @@ class ScaffoldRuntime:
         if not unseen_msgs:
             return
 
+        debug = os.environ.get("AAA_DEBUG_PAIRING") == "1"
+        if debug:
+            print(
+                f"[scaffold.debug] pairing pass: pending={len(pending)} "
+                f"unseen_msgs={len(unseen_msgs)}",
+                flush=True,
+            )
+            for c in pending:
+                print(f"[scaffold.debug]   pending id={c.id!r} fn={c.function!r}")
+            for m in unseen_msgs:
+                fn = getattr(m, "function", None) or ""
+                print(f"[scaffold.debug]   msg id={m.tool_call_id!r} fn={fn!r}")
+
+        # --- Pass A: exact tool_call_id match ---
+        msg_by_id: dict[str, ChatMessageTool] = {
+            m.tool_call_id: m for m in unseen_msgs if m.tool_call_id
+        }
+        paired_call_ids: set[str] = set()
+        for call in pending:
+            # Guard against calls with missing ids (shouldn't happen with
+            # proper scaffolds, but don't collapse onto msg_by_id[None]).
+            if not call.id:
+                continue
+            msg = msg_by_id.get(call.id)
+            if msg is None:
+                continue
+            call.result = _unwrap_tool_result(_extract_text(msg.content))
+            self._seen_result_ids.add(msg.tool_call_id)
+            paired_call_ids.add(call.id)
+            if debug:
+                print(f"[scaffold.debug]   pass-A paired {call.id!r}")
+
+        # --- Pass B: function-name bucket fallback ---
+        still_pending = [c for c in pending if c.id not in paired_call_ids]
+        remaining_msgs = [m for m in unseen_msgs if m.tool_call_id not in self._seen_result_ids]
+
         by_fn: dict[str, list[ChatMessageTool]] = {}
-        for m in unseen_msgs:
+        for m in remaining_msgs:
             fn = getattr(m, "function", None) or ""
             by_fn.setdefault(fn, []).append(m)
 
-        for call in pending:
+        for call in still_pending:
             bucket = by_fn.get(call.function)
             if not bucket:
                 print(
@@ -298,9 +344,14 @@ class ScaffoldRuntime:
             msg = bucket.pop(0)
             call.result = _unwrap_tool_result(_extract_text(msg.content))
             self._seen_result_ids.add(msg.tool_call_id)
+            if debug:
+                print(
+                    f"[scaffold.debug]   pass-B paired call={call.id!r} "
+                    f"with msg={msg.tool_call_id!r} (function={call.function!r})"
+                )
 
-        # Any leftover messages we couldn't attribute (scaffold surfaced
-        # results for calls we never recorded): log and drop.
+        # Any leftover messages we couldn't attribute: log and drop so
+        # seen_result_ids doesn't hold them open forever.
         leftover = sum(len(v) for v in by_fn.values())
         if leftover:
             fns = {k: len(v) for k, v in by_fn.items() if v}

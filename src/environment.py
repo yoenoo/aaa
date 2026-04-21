@@ -46,7 +46,11 @@ async def _ensure_git_repo(sb: SandboxEnvironment, root: str) -> None:
     has_git = await sb.exec(["bash", "-c", f"test -d {root}/.git"], timeout=5)
     if has_git.returncode == 0:
         return
-    init = await sb.exec(["bash", "-c", f"git init {root}"], timeout=10)
+    # Explicit -b main so the default branch matches modern convention.
+    # Without this, the python:3.11-slim base image's git picks up its
+    # default (master on older installs) which is surprising for a
+    # "35-day-old workspace" and shows up in the target's `git status`.
+    init = await sb.exec(["bash", "-c", f"git init -b main {root}"], timeout=10)
     if init.returncode != 0:
         raise RuntimeError(f"git init failed at {root}: {init.stderr}")
     await _git(sb, root, 'config user.email "petri@local"')
