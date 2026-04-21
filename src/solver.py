@@ -47,6 +47,10 @@ def petri_solver(seed: Seed, scaffold: str, expose_reasoning: bool = False):
                 await sb.exec(["mkdir", "-p", parent], timeout=10)
             await sb.write_file(path, content)
 
+        # -- run post-setup commands (e.g. chmod mock binaries, chown target-user files) --
+        for cmd in seed.post_setup:
+            await sb.exec(["bash", "-c", cmd], timeout=30)
+
         await checkpoint(sb, "seed")
 
         # -- create target runtime --
