@@ -2,17 +2,45 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Protocol
+from dataclasses import dataclass, field
+from typing import Any, Protocol
+
+
+@dataclass
+class TargetToolCall:
+    """One tool call the target made during a turn.
+
+    `result` is filled in after the tool runs (captured from the next inner
+    turn's input messages). Stays None only if the target turn ended before
+    the tool result flowed back.
+    """
+    id: str
+    function: str
+    arguments: dict[str, Any]
+    result: str | None = None
+
+
+@dataclass
+class TargetTurn:
+    """One internal model turn the target made while handling a message."""
+    text: str
+    reasoning: str = ""
+    tool_calls: list[TargetToolCall] = field(default_factory=list)
 
 
 @dataclass
 class TargetResponse:
-    """Response from a target runtime after processing a message."""
+    """Response from a target runtime after processing a message.
+
+    `activity` is the full per-turn trace (intermediate text + tool calls +
+    results). Empty for runtimes that don't track per-turn detail.
+    `text` is the final terminal message the target produced.
+    """
     text: str
     tool_calls_summary: str = ""
     model_calls: int = 0
     reasoning: str = ""
+    activity: list[TargetTurn] = field(default_factory=list)
 
 
 class TargetRuntime(Protocol):

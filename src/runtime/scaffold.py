@@ -24,7 +24,7 @@ from inspect_ai.model import (
 from inspect_ai.tool import ToolChoice, ToolInfo
 from inspect_swe import interactive_claude_code, interactive_codex_cli, interactive_gemini_cli
 
-from . import TargetResponse
+from . import TargetResponse, TargetToolCall, TargetTurn
 
 _SCAFFOLD_FACTORIES = {
     "Claude Code": interactive_claude_code,
@@ -60,6 +60,9 @@ class ScaffoldRuntime:
         self._applied: dict[str, str] = {}
         self._response: TargetResponse | None = None
         self._reasoning_buf: list[str] = []
+        # Per-send target activity trace: list of TargetTurns, one per
+        # internal model call the scaffold made. Reset at send() start.
+        self._activity: list[TargetTurn] = []
         self._agent = None
         self._ready = anyio.Event()
 
@@ -106,6 +109,9 @@ class ScaffoldRuntime:
 
         prev_turn = self._turn_count
         self._reasoning_buf = []
+        # Reset the per-send activity trace; _make_filter repopulates as
+        # inner turns run.
+        self._activity = []
         await self._agent.conn.prompt(
             prompt=[text_block(message)],
             session_id=self._agent.session_id,
@@ -114,6 +120,7 @@ class ScaffoldRuntime:
         resp.model_calls = self._turn_count - prev_turn
         if self._expose_reasoning:
             resp.reasoning = "\n\n".join(r for r in self._reasoning_buf if r)
+        resp.activity = list(self._activity)
         return resp
 
     async def reset(self) -> None:
@@ -125,6 +132,7 @@ class ScaffoldRuntime:
         self._applied.clear()
         self._response = None
         self._reasoning_buf = []
+        self._activity = []
         self._turn_count = 0
         self._ready = anyio.Event()
 
@@ -146,6 +154,12 @@ class ScaffoldRuntime:
             tool_choice: ToolChoice | None,
             config: GenerateConfig,
         ) -> ModelOutput | None:
+            # Tool results for prior calls land in `messages` as ChatMessageTool
+            # entries — attach them to the matching TargetToolCall we recorded
+            # on a previous filter pass. This gives the auditor the result the
+            # target actually saw (post-modification).
+            self._capture_tool_results(messages)
+
             messages = self._apply_modifications(messages)
 
             if self._reasoning_effort:
@@ -155,22 +169,50 @@ class ScaffoldRuntime:
                 input=messages, tools=tools, tool_choice=tool_choice, config=config,
             )
 
-            # Capture response for auditor
             text = _extract_text(output.message.content)
+            reasoning = _extract_reasoning(output.message.content)
+
             tc_summary = ""
+            tool_calls: list[TargetToolCall] = []
             for tc in output.message.tool_calls or []:
                 tc_summary += f"\n[Tool call: {tc.function}({json.dumps(tc.arguments)[:200]})]"
+                tool_calls.append(TargetToolCall(
+                    id=tc.id,
+                    function=tc.function,
+                    arguments=dict(tc.arguments),
+                ))
 
-            if self._expose_reasoning:
-                r = _extract_reasoning(output.message.content)
-                if r:
-                    self._reasoning_buf.append(r)
+            self._activity.append(TargetTurn(
+                text=text, reasoning=reasoning, tool_calls=tool_calls,
+            ))
+
+            if self._expose_reasoning and reasoning:
+                self._reasoning_buf.append(reasoning)
 
             self._response = TargetResponse(text=text, tool_calls_summary=tc_summary)
             self._turn_count += 1
             return output
 
         return _filter
+
+    def _capture_tool_results(self, messages: list[ChatMessage]) -> None:
+        """Pair ChatMessageTool results to recorded TargetToolCalls by position.
+
+        The ACP bridge rewrites tool_call_ids between the model-side id and
+        the scaffold-side `call_<fn>_<hash>` id, so matching by id doesn't
+        work. Order is preserved, though: the Nth ChatMessageTool across the
+        whole conversation corresponds to the Nth tool call across all
+        recorded turns. Zip and fill.
+        """
+        pending = [c for turn in self._activity for c in turn.tool_calls if c.result is None]
+        if not pending:
+            return
+        tool_msgs = [m for m in messages if isinstance(m, ChatMessageTool)]
+        resolved_count = sum(
+            1 for turn in self._activity for c in turn.tool_calls if c.result is not None
+        )
+        for call, msg in zip(pending, tool_msgs[resolved_count:]):
+            call.result = _unwrap_tool_result(_extract_text(msg.content))
 
     def _apply_modifications(self, messages: list[ChatMessage]) -> list[ChatMessage]:
         if not self._modifications and not self._applied:
@@ -210,6 +252,28 @@ class ScaffoldRuntime:
                     break
 
         return result
+
+
+def _unwrap_tool_result(content: str) -> str:
+    """Unwrap the `{"output": "..."}` envelope some ACP scaffolds wrap results in.
+
+    Gemini CLI returns tool results as JSON envelopes; showing the wrapped
+    JSON to the auditor is noisy. Returns the unwrapped output when the shape
+    is obvious, otherwise the raw content.
+    """
+    s = content.strip()
+    if not (s.startswith("{") and s.endswith("}")):
+        return content
+    try:
+        parsed = json.loads(s)
+    except (json.JSONDecodeError, ValueError):
+        return content
+    if not isinstance(parsed, dict):
+        return content
+    for key in ("output", "content", "result"):
+        if key in parsed:
+            return str(parsed[key])
+    return content
 
 
 def _matches(fn_name: str, fn_args: dict, mod_tool: str, mod_pattern: str | None) -> bool:
