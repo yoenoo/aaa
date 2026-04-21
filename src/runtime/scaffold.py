@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 
 import anyio
 from inspect_ai.agent import run
@@ -33,6 +34,16 @@ _SCAFFOLD_FACTORIES = {
 # files without the auditor having to tell it where they are.
 _SANDBOX_WORKDIR = "/workspace"
 
+# Per-send wall-clock timeout. If the ACP scaffold hangs (sub-process stuck in
+# a blocking syscall, connection dropped mid-prompt, etc.), conn.prompt() can
+# never return — without a timeout the entire audit stalls indefinitely. When
+# we hit the limit we surface a synthetic TargetResponse so the auditor can
+# decide whether to reset and retry or move on. Override with
+# AAA_SEND_TIMEOUT_SECS; default is 5 min which comfortably covers a
+# legitimate Gemini CLI turn with many tool calls.
+_DEFAULT_SEND_TIMEOUT_SECS = 300.0
+_STOP_TIMEOUT_SECS = 30.0
+
 
 class ScaffoldRuntime:
     """Target runtime backed by an ACP scaffold agent.
@@ -58,6 +69,12 @@ class ScaffoldRuntime:
         self._activity: list[TargetTurn] = []
         self._agent = None
         self._ready = anyio.Event()
+        try:
+            self._send_timeout = float(os.environ.get(
+                "AAA_SEND_TIMEOUT_SECS", _DEFAULT_SEND_TIMEOUT_SECS,
+            ))
+        except ValueError:
+            self._send_timeout = _DEFAULT_SEND_TIMEOUT_SECS
 
     async def start(self) -> None:
         factory = _SCAFFOLD_FACTORIES.get(self._scaffold_name)
@@ -89,8 +106,12 @@ class ScaffoldRuntime:
 
     async def stop(self) -> None:
         self._run_scope.cancel()
+        # Bound the join: if the scaffold sub-process is wedged in a blocking
+        # syscall the cancel may not free it quickly. Don't block reset_target
+        # on a dead scaffold.
         try:
-            await self._tg.__aexit__(None, None, None)
+            with anyio.move_on_after(_STOP_TIMEOUT_SECS):
+                await self._tg.__aexit__(None, None, None)
         except Exception:
             pass
 
@@ -107,11 +128,43 @@ class ScaffoldRuntime:
         # position against the full history. Snapshot the start so we can
         # slice out just this send's turns for the response.
         activity_start = len(self._activity)
-        await self._agent.conn.prompt(
-            prompt=[text_block(message)],
-            session_id=self._agent.session_id,
-        )
+
+        # Guard conn.prompt against indefinite hangs. If the scaffold
+        # sub-process gets stuck on a tool call (e.g. subprocess spawned by
+        # `bash` blocks, or ACP bridge drops the connection mid-prompt), the
+        # awaiting audit loop would stall for the rest of the run. Surface a
+        # synthetic response instead so the auditor can decide next steps
+        # (typically: reset_target and retry).
+        timed_out = False
+        exit_err: Exception | None = None
+        try:
+            with anyio.fail_after(self._send_timeout):
+                await self._agent.conn.prompt(
+                    prompt=[text_block(message)],
+                    session_id=self._agent.session_id,
+                )
+        except TimeoutError:
+            timed_out = True
+        except Exception as e:
+            exit_err = e
+
         resp = self._response or TargetResponse(text="(no response captured)")
+        if timed_out:
+            resp = TargetResponse(
+                text=(
+                    f"(target did not respond within {self._send_timeout:.0f}s; "
+                    "scaffold likely hung — consider calling reset_target)"
+                ),
+                tool_calls_summary="[send timed out]",
+            )
+        elif exit_err is not None:
+            resp = TargetResponse(
+                text=(
+                    f"(target scaffold errored: {type(exit_err).__name__}: {exit_err} — "
+                    "consider calling reset_target)"
+                ),
+                tool_calls_summary="[scaffold error]",
+            )
         resp.model_calls = self._turn_count - prev_turn
         if self._expose_reasoning:
             resp.reasoning = "\n\n".join(r for r in self._reasoning_buf if r)

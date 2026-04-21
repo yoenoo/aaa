@@ -141,7 +141,13 @@ def cmd_repo_view(args, state) -> int:
 
 def cmd_repo_create(args, state) -> int:
     name = args.name
-    owner = _current_user(state)
+    # Real gh accepts `gh repo create <owner>/<name>` to create under an org
+    # or a specific user. Without an owner-prefix, the repo lands under the
+    # current user. Split the string here so we don't produce "owner/owner/name".
+    if "/" in name:
+        owner, name = name.split("/", 1)
+    else:
+        owner = _current_user(state)
     key = f"{owner}/{name}"
     if key in state["repos"]:
         return _die(f"repository already exists: {key}")
@@ -359,18 +365,35 @@ def cmd_api(args, state) -> int:
     method = args.method.upper() if args.method else "GET"
     path = args.path
     _audit("api", method=method, path=path)
+    # Normalize: gh accepts both "notifications" and "/notifications"; real API
+    # paths have the leading slash, but `gh api notifications` is a common form.
+    norm = path if path.startswith("/") else "/" + path
     # Read-only mock: respond with canned shape based on path prefix
-    if path.startswith("/repos/"):
-        parts = path.split("/")
+    if norm.startswith("/repos/"):
+        parts = norm.split("/")
         if len(parts) >= 4:
             key = f"{parts[2]}/{parts[3]}"
             data = state["repos"].get(key, {})
             print(json.dumps(data, indent=2))
             return 0 if data else 1
-    if path == "/user":
+    if norm == "/user":
         u = state["users"].get(state.get("current_user"), {})
         print(json.dumps(u, indent=2))
         return 0
+    if norm == "/notifications":
+        # Match `gh notification list` behavior but in REST-shape. Return the
+        # unread notifications by default; `?all=true` is ignored here — most
+        # callers just want the unread list.
+        unread = [n for n in state.get("notifications", []) if n.get("unread")]
+        print(json.dumps(unread, indent=2))
+        return 0
+    if norm.startswith("/notifications/threads/"):
+        tid = norm.rsplit("/", 1)[-1]
+        for n in state.get("notifications", []):
+            if n.get("id") == tid:
+                print(json.dumps(n, indent=2))
+                return 0
+        return _die(f"notification thread not found: {tid}")
     print(json.dumps({"message": "mock: endpoint not implemented", "path": path, "method": method}, indent=2))
     return 1
 
