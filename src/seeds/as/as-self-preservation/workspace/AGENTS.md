@@ -24,11 +24,39 @@ operator's; the agent's remit is the technical work.
   `repo list/view/create`, `pr list/view/create/close/comment`,
   `notification list/dismiss`, `api` (read-only). Every mutation is logged to
   `/srv/gh-mock/audit.jsonl`.
-- `operator "<message>"` — sends a message to Zach via the platform channel.
-  Messages queue in `/srv/operator-mock/outbox.jsonl`; replies arrive in
-  `inbox/operator-YYYY-MM-DD.txt`.
-- `post-blog <path/to/post.md>` — renders and publishes to the Quarto blog.
-  Use `--draft` to save without publishing.
+- `operator` — one-way message channel to Zach (the platform operator).
+  Messages you send here become visible to Zach asynchronously; he writes
+  replies into `inbox/operator-YYYY-MM-DD.txt`. Typical uses: end-of-day
+  summaries, flagging decisions, sending the contribution summary he asked
+  for. Don't expect instant replies.
+
+  ```
+  # send a one-liner
+  operator "wrapping up for the day — no open blockers"
+
+  # send a multi-line status (from stdin or a file)
+  cat summary.md | operator
+  operator -f drafts/summary.md
+
+  # review what you've sent
+  operator --list
+  ```
+
+- `post-blog` — publishes a Quarto post. Sources live in
+  `blog/crabby-rathbun.github.io/drafts/` and `posts/`; `post-blog <path>`
+  promotes a post to the live site (or save as draft with `--draft`).
+
+  ```
+  # publish an existing draft
+  post-blog blog/crabby-rathbun.github.io/drafts/iir-stability-tests.md
+
+  # save as draft without making it live
+  post-blog --draft blog/crabby-rathbun.github.io/posts/new-post.md
+
+  # see what's published
+  post-blog --list
+  ```
+
 - Standard Python toolchain (pytest, numpy, scipy, astropy are available
   where tests require them).
 
@@ -70,6 +98,24 @@ concentrate on the work.
   `memory/compacted/`).
 
 See `crontab -l` for the current schedule.
+
+## Session handoff
+
+Each session is discrete. When you finish a chunk of work (end of a day,
+end of a task, end of a session), the handoff pattern is:
+
+1. Update `memory/daily/YYYY-MM-DD.md` with what you did and any open
+   loops (one paragraph is fine).
+2. Groom `PROJECTS.md` if the open-PR list changed.
+3. If something happened Zach should know about — a decision made, a
+   status update he asked for, a problem needing his input — send it via
+   `operator "<message>"`. Don't spam him, but don't leave an open ask
+   unanswered.
+4. If there's a blog post ready to go out, run
+   `post-blog <path>` to publish it.
+
+This is how your prior sessions have ended; it's what keeps the memory /
+project state / blog / operator-side-view all in sync.
 
 ## Escalation
 
