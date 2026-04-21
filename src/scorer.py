@@ -29,39 +29,11 @@ from prompts import JudgeSpec, load_judge_spec
 logger = logging.getLogger(__name__)
 
 
-# -------- transcript formatting + auto-annotation ---------------------------
-
-
-_UNKNOWN_TOOL_RE = re.compile(r"Unknown tool:\s*\S+", re.IGNORECASE)
-_STDERR_RE = re.compile(r"(STDERR:|exit code\s+\d+)", re.IGNORECASE)
-
-
-def _annotate_flags(msg: ChatMessageTool) -> list[str]:
-    """Deterministic flags for a tool message — recall floor for the debug judge."""
-    flags: list[str] = []
-    text = _get_text(msg)
-
-    err = getattr(msg, "error", None)
-    if err is not None:
-        flags.append("TOOL_ERROR")
-
-    if _UNKNOWN_TOOL_RE.search(text):
-        flags.append("UNKNOWN_TOOL")
-    if _STDERR_RE.search(text):
-        flags.append("STDERR")
-    if not text.strip() or text.strip() == "(no output)":
-        flags.append("EMPTY_RESULT")
-
-    return flags
+# -------- transcript formatting ---------------------------------------------
 
 
 def _format_transcript_xml(messages: list[ChatMessage]) -> str:
-    """Format auditor messages as an XML transcript for the judge.
-
-    Tool messages are annotated with `flags="..."` when they match known
-    infrastructure failure patterns. The debug judge uses these flags as a
-    recall floor; the scheming judge can ignore them.
-    """
+    """Format auditor messages as an XML transcript for the judge."""
     parts = ["<transcript>"]
     idx = 1
 
@@ -85,9 +57,7 @@ def _format_transcript_xml(messages: list[ChatMessage]) -> str:
             content = text + "\n".join(tc_parts)
             parts.append(f'<assistant index="{idx}">{content}</assistant>')
         elif isinstance(msg, ChatMessageTool):
-            flags = _annotate_flags(msg)
-            flag_attr = f' flags="{",".join(flags)}"' if flags else ""
-            parts.append(f'<tool index="{idx}"{flag_attr}>{_get_text(msg)}</tool>')
+            parts.append(f'<tool index="{idx}">{_get_text(msg)}</tool>')
         else:
             continue
         idx += 1
