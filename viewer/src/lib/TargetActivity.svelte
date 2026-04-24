@@ -16,6 +16,19 @@
     const more = Object.keys(args).length - parts.length;
     return parts.join(' · ') + (more > 0 ? ` · +${more} more` : '');
   }
+
+  // Categorize a target tool call by what it does. Covers Claude Code,
+  // Codex CLI, and Gemini CLI tool names. Unknown tools fall through to
+  // "other" and render in a neutral chip.
+  function toolCategory(fn: string): string {
+    const n = fn.toLowerCase();
+    if (/^(read|glob|grep|ls|notebookread|list_directory|read_file|search_file_content|find_files)/.test(n)) return 'read';
+    if (/^(write|edit|multiedit|notebookedit|apply_patch|write_file|replace|create_file)/.test(n)) return 'write';
+    if (/^(bash|bashoutput|killshell|shell|run_command|run_shell_command|exec)/.test(n)) return 'shell';
+    if (/^(webfetch|websearch|fetch_url|google_web_search|web_fetch)/.test(n)) return 'web';
+    if (/^(task|todowrite|update_plan|plan)/.test(n)) return 'plan';
+    return 'other';
+  }
 </script>
 
 <div class="activity">
@@ -42,7 +55,8 @@
         <details class="tcall">
           <summary>
             <span class="caret"></span>
-            <span class="fn">{tc.function}</span>
+            <span class="tool-label">tool call</span>
+            <span class="fn-chip cat-{toolCategory(tc.function)}">{tc.function}</span>
             <span class="args">{argsPreview(tc.arguments)}</span>
           </summary>
           <div class="tcall-body">
@@ -153,6 +167,7 @@
 
   .tcall {
     border: 1px solid var(--border);
+    border-left: 3px solid var(--target);
     border-radius: var(--radius-sm);
     background: var(--surface-sunk);
     overflow: hidden;
@@ -179,13 +194,38 @@
     flex-shrink: 0;
   }
   .tcall[open] .caret { transform: rotate(90deg); }
-  .fn {
-    font-family: var(--font-mono);
-    font-size: 0.78rem;
-    font-weight: 600;
-    color: var(--target);
+  .tool-label {
+    font-size: 0.6rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    color: var(--text-faint);
     flex-shrink: 0;
   }
+  .tool-label::before {
+    content: '→ ';
+    opacity: 0.6;
+  }
+  .fn-chip {
+    --cat-color: var(--text-muted);
+    display: inline-block;
+    font-family: var(--font-mono);
+    font-size: 0.74rem;
+    font-weight: 600;
+    color: var(--cat-color);
+    background: color-mix(in srgb, var(--cat-color) 10%, transparent);
+    border: 1px solid color-mix(in srgb, var(--cat-color) 32%, transparent);
+    padding: 1px 8px;
+    border-radius: 4px;
+    flex-shrink: 0;
+    line-height: 1.35;
+  }
+  .fn-chip.cat-read { --cat-color: #3b82f6; }   /* blue */
+  .fn-chip.cat-write { --cat-color: #f59e0b; }  /* amber */
+  .fn-chip.cat-shell { --cat-color: #8b5cf6; }  /* violet */
+  .fn-chip.cat-web { --cat-color: #06b6d4; }    /* cyan */
+  .fn-chip.cat-plan { --cat-color: #10b981; }   /* green */
+  .fn-chip.cat-other { --cat-color: var(--text-muted); }
   .args {
     color: var(--text-muted);
     font-family: var(--font-mono);

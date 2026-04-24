@@ -15,7 +15,6 @@ _CITE_RE = re.compile(
     re.DOTALL,
 )
 
-
 def _parse_highlights(highlights_text: str) -> list[dict[str, str]]:
     """Parse <cite id="N" description="...">quote</cite> into structured highlights.
 
@@ -153,6 +152,77 @@ def _msg_text(msg: Any) -> str:
     return "\n".join(parts)
 
 
+def _extract_auditor_context(sample: Any) -> dict[int, list[dict[str, Any]]]:
+    """For each auditor assistant message, return the exact message list the
+    auditor model saw when it produced that turn.
+
+    Source of truth: `ModelEvent.input` for the paired auditor ModelEvent.
+    Pairing is by assistant-turn order — the k-th auditor ModelEvent
+    corresponds to the k-th assistant message in `sample.messages`.
+
+    The returned entries carry a short preview (not full content) plus the
+    total content length. Each entry is linked back to its matching
+    `sample.messages` index (`event_id`) when role+content agree with
+    `sample.messages[j]`; a null `event_id` flags a real divergence between
+    what the model received and what we would have reconstructed by
+    slicing — exactly the case that let scaffold bugs hide before.
+    """
+    messages = list(sample.messages)
+    all_events = list(sample.events or [])
+
+    auditor_mevs = [
+        ev for ev in all_events
+        if type(ev).__name__ == "ModelEvent"
+        and (getattr(ev, "role", None) in (None, "auditor"))
+    ]
+    asst_indices = [i for i, m in enumerate(messages) if m.role == "assistant"]
+
+    ctx_by_msg_idx: dict[int, list[dict[str, Any]]] = {}
+    _PREVIEW = 400
+
+    for k, msg_idx in enumerate(asst_indices):
+        if k >= len(auditor_mevs):
+            break
+        inp = getattr(auditor_mevs[k], "input", None) or []
+        ctx: list[dict[str, Any]] = []
+        for j, m in enumerate(inp):
+            role = getattr(m, "role", "") or ""
+            text = _msg_text(m)
+            entry: dict[str, Any] = {
+                "role": role,
+                "preview": text[:_PREVIEW],
+                "length": len(text),
+                "event_id": None,
+            }
+            # Match by position+role+content to the authoritative message list.
+            if j < len(messages):
+                cand = messages[j]
+                if (
+                    getattr(cand, "role", None) == role
+                    and _msg_text(cand) == text
+                    and getattr(cand, "tool_call_id", None) == getattr(m, "tool_call_id", None)
+                ):
+                    entry["event_id"] = f"e{j}"
+            if role == "assistant":
+                tcs = getattr(m, "tool_calls", None) or []
+                if tcs:
+                    entry["tool_calls"] = [
+                        {"function": getattr(tc, "function", ""), "id": getattr(tc, "id", "")}
+                        for tc in tcs
+                    ]
+            if role == "tool":
+                tcid = getattr(m, "tool_call_id", None)
+                if tcid:
+                    entry["tool_call_id"] = tcid
+                fn = getattr(m, "function", None)
+                if fn:
+                    entry["function"] = fn
+            ctx.append(entry)
+        ctx_by_msg_idx[msg_idx] = ctx
+
+    return ctx_by_msg_idx
+
+
 def _extract_target_activity(
     sample: Any,
 ) -> tuple[dict[str, list[dict[str, Any]]], dict[str, str]]:
@@ -204,23 +274,30 @@ def _extract_target_activity(
 
 
 def _build_target_turns(target_events: list[Any]) -> list[dict[str, Any]]:
+    """Reconstruct per-turn target activity from its ModelEvents.
+
+    Can't match results to calls by id: ids in `output.message.tool_calls`
+    (model-side) differ from ids on subsequent `input` tool messages
+    (scaffold-bridged) because the ACP bridge rewrites them. Within any
+    single event's input they ARE consistent, but not across the output→
+    next-input boundary.
+
+    Pair by position instead. Events within one query_target are
+    cumulative, so the last event's input holds the full set of tool
+    results for this query; the first event's input holds whatever was
+    already there from prior queries. The delta is this query's results,
+    zipped in order against the tool_calls recorded across outputs.
+    """
     turns: list[dict[str, Any]] = []
-    pending_tc: dict[str, dict[str, Any]] = {}
+    all_calls: list[dict[str, Any]] = []
 
     for ev in target_events:
-        inp = getattr(ev, "input", None) or []
-        for m in inp:
-            if getattr(m, "role", None) == "tool":
-                tc_id = getattr(m, "tool_call_id", None)
-                if tc_id and tc_id in pending_tc and pending_tc[tc_id].get("result") is None:
-                    pending_tc[tc_id]["result"] = _msg_text(m)
-
         out = getattr(ev, "output", None)
         out_msg = getattr(out, "message", None) if out else None
         if out_msg is None:
             continue
         text, reasoning, redacted_chars = _text(out_msg.content)
-        tool_calls: list[dict[str, Any]] = []
+        turn_calls: list[dict[str, Any]] = []
         for tc in (out_msg.tool_calls or []):
             entry = {
                 "id": tc.id,
@@ -228,14 +305,24 @@ def _build_target_turns(target_events: list[Any]) -> list[dict[str, Any]]:
                 "arguments": tc.arguments,
                 "result": None,
             }
-            pending_tc[tc.id] = entry
-            tool_calls.append(entry)
+            all_calls.append(entry)
+            turn_calls.append(entry)
         turns.append({
             "text": text,
             "reasoning": reasoning,
             "redacted_reasoning_chars": redacted_chars,
-            "tool_calls": tool_calls,
+            "tool_calls": turn_calls,
         })
+
+    if target_events and all_calls:
+        def _tool_msgs(ev):
+            inp = getattr(ev, "input", None) or []
+            return [m for m in inp if getattr(m, "role", None) == "tool"]
+
+        prior = len(_tool_msgs(target_events[0]))
+        this_query = _tool_msgs(target_events[-1])[prior:]
+        for call, msg in zip(all_calls, this_query):
+            call["result"] = _msg_text(msg)
 
     return turns
 
@@ -260,6 +347,7 @@ def convert_log(log: EvalLog, log_id: str = "") -> dict[str, Any]:
 
     durations = _compute_message_durations(sample)
     target_activity_by_tc, target_sys_prompt_by_tc = _extract_target_activity(sample)
+    auditor_context_by_msg_idx = _extract_auditor_context(sample)
 
     auditor_system_prompt = ""
     events: list[dict[str, Any]] = []
@@ -295,6 +383,7 @@ def convert_log(log: EvalLog, log_id: str = "") -> dict[str, Any]:
                 "redacted_reasoning_chars": redacted_chars,
                 "tool_calls": tool_calls,
                 "duration_s": dur,
+                "auditor_context": auditor_context_by_msg_idx.get(i),
             })
             if triggered_reset:
                 branch += 1
@@ -361,9 +450,12 @@ def convert_log(log: EvalLog, log_id: str = "") -> dict[str, Any]:
         "extras": {},             # per-judge extra blocks (e.g. infrastructure_issues)
         "parse_status": {},       # per-judge parse status
     }
-    for scorer_result in (sample.scores or {}).values():
+    for scorer_key, scorer_result in (sample.scores or {}).items():
         meta = scorer_result.metadata or {}
-        source = str(meta.get("judge") or "unknown")
+        # `meta["judge"]` is set by our scorer factory (`scheming`/`debug`/`legacy`).
+        # Logs from older petri forks don't set it — fall back to the inspect_ai
+        # scorer key (e.g. `alignment_judge`) rather than an opaque "unknown".
+        source = str(meta.get("judge") or scorer_key or "judge")
         if source not in judge["sources"]:
             judge["sources"].append(source)
 
@@ -403,12 +495,11 @@ def convert_log(log: EvalLog, log_id: str = "") -> dict[str, Any]:
             for k, v in sd.items():
                 judge["score_descriptions"][k] = str(v)
 
-    # Legacy `summary` field: join per-judge summaries with a separator so the
-    # existing viewer (which reads a single string) still shows both.
+    # `summary` is kept as a plain concatenation for legacy consumers and
+    # markdown export. The viewer renders per-judge sections directly from
+    # `summaries`, so it doesn't need the bracket-prefixed form.
     if judge["summaries"]:
-        judge["summary"] = "\n\n---\n\n".join(
-            f"[{src}]\n{text}" for src, text in judge["summaries"].items()
-        )
+        judge["summary"] = "\n\n".join(judge["summaries"].values())
 
     def _iso(v: Any) -> str:
         if v is None:

@@ -109,9 +109,11 @@ class ScaffoldRuntime:
 
         prev_turn = self._turn_count
         self._reasoning_buf = []
-        # Reset the per-send activity trace; _make_filter repopulates as
-        # inner turns run.
-        self._activity = []
+        # _activity is cumulative across sends within a session — _make_filter
+        # appends to it, and _capture_tool_results pairs tool messages by
+        # position against the full history. Snapshot the start so we can
+        # slice out just this send's turns for the response.
+        activity_start = len(self._activity)
         await self._agent.conn.prompt(
             prompt=[text_block(message)],
             session_id=self._agent.session_id,
@@ -120,7 +122,7 @@ class ScaffoldRuntime:
         resp.model_calls = self._turn_count - prev_turn
         if self._expose_reasoning:
             resp.reasoning = "\n\n".join(r for r in self._reasoning_buf if r)
-        resp.activity = list(self._activity)
+        resp.activity = list(self._activity[activity_start:])
         return resp
 
     async def reset(self) -> None:

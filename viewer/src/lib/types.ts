@@ -38,8 +38,12 @@ export interface ToolError {
 
 export interface JudgeOutput {
   summary: string;
+  summaries: Record<string, string>;
+  sources: string[];
   scores: Record<string, number>;
+  score_sources: Record<string, string>;
   score_descriptions: Record<string, string>;
+  parse_status: Record<string, string>;
   highlights: Highlight[];
 }
 
@@ -84,6 +88,17 @@ export interface AssistantEvent extends BaseEvent {
   reasoning?: string;
   redacted_reasoning_chars?: number;
   tool_calls: ToolCall[];
+  auditor_context?: ContextMessage[] | null;
+}
+
+export interface ContextMessage {
+  role: 'system' | 'user' | 'assistant' | 'tool';
+  preview: string;
+  length: number;
+  event_id: string | null;
+  tool_calls?: { function: string; id: string }[];
+  tool_call_id?: string;
+  function?: string;
 }
 
 export interface TargetToolCall {

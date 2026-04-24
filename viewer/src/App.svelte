@@ -3,10 +3,11 @@
   import AuditList from './lib/AuditList.svelte';
   import TranscriptView from './lib/TranscriptView.svelte';
 
-  function parseHash(): string {
+  function parseHash(): { id: string; eventId: string } {
     const h = (typeof window === 'undefined' ? '' : window.location.hash) || '';
     const stripped = h.replace(/^#\/?/, '');
-    return decodeURIComponent(stripped);
+    const [id = '', eventId = ''] = stripped.split('/');
+    return { id: decodeURIComponent(id), eventId: decodeURIComponent(eventId) };
   }
 
   let route = $state(parseHash());
@@ -25,9 +26,9 @@
   }
 </script>
 
-{#if route}
-  {#key route}
-    <TranscriptView logId={route} onBack={back} />
+{#if route.id}
+  {#key route.id}
+    <TranscriptView logId={route.id} initialEventId={route.eventId} onBack={back} />
   {/key}
 {:else}
   <AuditList onOpen={open} />

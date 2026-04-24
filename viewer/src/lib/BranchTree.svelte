@@ -247,6 +247,7 @@
     width: 18px;
     align-self: stretch;
     display: flex;
+    align-items: center;
     justify-content: center;
   }
   .rail::before {
@@ -267,9 +268,7 @@
     border-radius: 50%;
     background: var(--surface);
     border: 1.5px solid var(--border-strong);
-    align-self: center;
     box-shadow: 0 0 0 2px var(--bg);
-    margin-top: 8px;
   }
   .event.role-user .dot { border-color: var(--user); }
   .event.role-assistant .dot { border-color: var(--auditor); }

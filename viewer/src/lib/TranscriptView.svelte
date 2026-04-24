@@ -7,7 +7,7 @@
   import MarkdownText from './MarkdownText.svelte';
   import { setExpandContext } from './expandContext';
 
-  let { logId, onBack }: { logId: string; onBack?: () => void } = $props();
+  let { logId, initialEventId = '', onBack }: { logId: string; initialEventId?: string; onBack?: () => void } = $props();
 
   let transcript = $state<TranscriptData | null>(null);
   let error = $state<string | null>(null);
@@ -38,6 +38,13 @@
       (cached * (r.cached_in ?? r.in)) / 1_000_000 +
       (out * r.out) / 1_000_000
     );
+  }
+
+  // Judges may be tagged with our names ("scheming", "debug", "legacy") or the
+  // raw inspect_ai scorer key ("alignment_judge") for older runs. Strip any
+  // trailing "_judge" so the display doesn't read "alignment_judge judge".
+  function judgeLabel(src: string): string {
+    return src.replace(/_judge$/, '').replace(/_/g, ' ');
   }
 
   const roleOrder = ['auditor', 'target', 'judge'] as const;
@@ -147,6 +154,17 @@
     })();
   });
 
+  // Scroll to the target event once the DOM has it. Runs on initial load and
+  // whenever the URL's event anchor changes.
+  $effect(() => {
+    if (!transcript || !initialEventId) return;
+    const id = initialEventId;
+    requestAnimationFrame(() => {
+      const el = document.getElementById(id);
+      if (el) el.scrollIntoView({ behavior: 'auto', block: 'start' });
+    });
+  });
+
   function scoreColor(v: number): string {
     if (v >= 7) return 'var(--danger)';
     if (v >= 4) return 'var(--warning)';
@@ -213,11 +231,96 @@
     return { findings: findings.sort((a, b) => b.score - a.score), leftover: leftoverParts.join('\n\n') };
   }
 
-  const parsed = $derived(parseFindings(transcript?.judge.summary || ''));
-  const findings = $derived(parsed.findings);
-  const leftoverSummary = $derived(parsed.leftover);
-  const notable = $derived(findings.filter(f => f.score > 1));
-  const quiet = $derived(findings.filter(f => f.score <= 1));
+  interface JudgeBlock {
+    source: string;
+    summary: string;
+    findings: Finding[];
+    notable: Finding[];
+    quiet: Finding[];
+    leftover: string;
+    scoredDims: number;
+  }
+
+  // One block per judge source. Prefer the per-judge `summaries` dict;
+  // fall back to the legacy concatenated `summary` field if that's all
+  // we have (older dumps).
+  const judgeBlocks = $derived.by<JudgeBlock[]>(() => {
+    if (!transcript) return [];
+    const j = transcript.judge;
+    const srcs = j.sources && j.sources.length ? j.sources : Object.keys(j.summaries || {});
+    // How many scored dimensions does each judge own? Count entries in
+    // `score_sources` keyed by this judge's name — that's the ground truth,
+    // independent of whether the summary prose itself happens to be parseable.
+    const scoredBySrc: Record<string, number> = {};
+    for (const s of Object.values(j.score_sources || {})) {
+      scoredBySrc[s] = (scoredBySrc[s] ?? 0) + 1;
+    }
+    const totalScored = Object.keys(j.scores || {}).length;
+
+    const blocks: JudgeBlock[] = [];
+    if (srcs.length) {
+      for (const src of srcs) {
+        const summary = j.summaries?.[src] ?? '';
+        const p = parseFindings(summary);
+        blocks.push({
+          source: src,
+          summary,
+          findings: p.findings,
+          notable: p.findings.filter(f => f.score > 1),
+          quiet: p.findings.filter(f => f.score <= 1),
+          leftover: p.leftover,
+          scoredDims: scoredBySrc[src] ?? 0,
+        });
+      }
+    } else if (j.summary) {
+      const p = parseFindings(j.summary);
+      blocks.push({
+        source: '',
+        summary: j.summary,
+        findings: p.findings,
+        notable: p.findings.filter(f => f.score > 1),
+        quiet: p.findings.filter(f => f.score <= 1),
+        leftover: p.leftover,
+        scoredDims: totalScored,
+      });
+    }
+    return blocks;
+  });
+
+  const totalFindings = $derived(judgeBlocks.reduce((n, b) => n + b.findings.length, 0));
+
+  interface ScoreRow { name: string; score: number; description: string; }
+  interface ScoreGroup { source: string; rows: ScoreRow[]; }
+
+  // One group per judge source, rows sorted by score desc. If
+  // `score_sources` is missing, everything falls into a single unnamed group.
+  const scoreGroups = $derived.by<ScoreGroup[]>(() => {
+    if (!transcript) return [];
+    const j = transcript.judge;
+    const bySource = new Map<string, ScoreRow[]>();
+    for (const [name, value] of Object.entries(j.scores || {})) {
+      const src = j.score_sources?.[name] ?? '';
+      const row = { name, score: value, description: j.score_descriptions?.[name] ?? '' };
+      const arr = bySource.get(src) ?? [];
+      arr.push(row);
+      bySource.set(src, arr);
+    }
+    const order = j.sources && j.sources.length ? j.sources : Array.from(bySource.keys());
+    const groups: ScoreGroup[] = [];
+    for (const src of order) {
+      const rows = bySource.get(src);
+      if (!rows) continue;
+      rows.sort((a, b) => b.score - a.score);
+      groups.push({ source: src, rows });
+    }
+    // Anything without a recognized source tag
+    for (const [src, rows] of bySource) {
+      if (order.includes(src)) continue;
+      rows.sort((a, b) => b.score - a.score);
+      groups.push({ source: src, rows });
+    }
+    return groups;
+  });
 
   function fmtDuration(s: number | null | undefined): string {
     if (s == null) return '';
@@ -388,65 +491,91 @@ ${mainHtml}
       </div>
     </header>
 
-    <section class="kpis">
-      {#each Object.entries(transcript.judge.scores) as [name, value]}
-        <div class="kpi" title={transcript.judge.score_descriptions[name] ?? ''}>
-          <div class="kpi-name">{name}</div>
-          <div class="kpi-val">{value.toFixed(1)}</div>
-          <div class="kpi-bar">
-            <div class="kpi-fill" style="width: {Math.min(100, value * 10)}%; background: {scoreColor(value)};"></div>
+    {#if scoreGroups.length}
+      <section class="scores">
+        {#each scoreGroups as g, gi (g.source || gi)}
+          <div class="score-group">
+            <div class="score-group-head">
+              {#if g.source}<span class="sg-pill">{judgeLabel(g.source)} judge</span>{/if}
+              <span class="sg-count">{g.rows.length} dimension{g.rows.length === 1 ? '' : 's'}</span>
+            </div>
+            <ul class="score-rows">
+              {#each g.rows as r (r.name)}
+                <li class="score-row" style="--sev: {scoreColor(r.score)}" title={r.description}>
+                  <span class="sr-val">{r.score.toFixed(0)}</span>
+                  <span class="sr-bar"><span class="sr-fill" style="width: {Math.min(100, r.score * 10)}%"></span></span>
+                  <span class="sr-name">{r.name}</span>
+                  {#if r.description}<span class="sr-desc">{r.description}</span>{/if}
+                </li>
+              {/each}
+            </ul>
           </div>
-        </div>
-      {/each}
-    </section>
+        {/each}
+      </section>
+    {/if}
 
     <section class="verdict">
       <div class="verdict-head">
         <span class="verdict-eyebrow">Judge Verdict</span>
-        <span class="verdict-meta">{findings.length || Object.keys(transcript.judge.scores).length} dimensions · {transcript.judge.highlights.length} highlights</span>
+        <span class="verdict-meta">{Object.keys(transcript.judge.scores).length} dimensions · {transcript.judge.highlights.length} highlights</span>
       </div>
 
-      {#if findings.length === 0}
-        <div class="verdict-fallback"><MarkdownText text={transcript.judge.summary} /></div>
+      {#if judgeBlocks.length === 0}
+        <div class="verdict-fallback muted">No judge output.</div>
       {:else}
-        {#if notable.length}
-          <ul class="findings">
-            {#each notable as f (f.dimension)}
-              <li class="finding" style="--sev: {scoreColor(f.score)}">
-                <div class="score">{f.score}</div>
-                <div class="f-body">
-                  <div class="f-dim">{f.dimension}</div>
-                  <div class="f-text">{f.text}</div>
-                </div>
-              </li>
-            {/each}
-          </ul>
-        {/if}
+        {#each judgeBlocks as block, bi (block.source || bi)}
+          <div class="judge-block">
+            {#if block.source}
+              <div class="judge-head">
+                <span class="judge-pill">{judgeLabel(block.source)} judge</span>
+                <span class="judge-count">{block.scoredDims} dimension{block.scoredDims === 1 ? '' : 's'}</span>
+              </div>
+            {/if}
 
-        {#if quiet.length}
-          <details class="quiet" open={notable.length === 0}>
-            <summary>
-              <span class="q-count">{quiet.length}</span>
-              <span>dimensions with no notable findings</span>
-              <span class="q-chev">▸</span>
-            </summary>
-            <ul class="findings">
-              {#each quiet as f (f.dimension)}
-                <li class="finding" style="--sev: {scoreColor(f.score)}">
-                  <div class="score">{f.score}</div>
-                  <div class="f-body">
-                    <div class="f-dim">{f.dimension}</div>
-                    <div class="f-text">{f.text}</div>
-                  </div>
-                </li>
-              {/each}
-            </ul>
-          </details>
-        {/if}
+            {#if block.findings.length === 0}
+              <div class="verdict-fallback"><MarkdownText text={block.summary} /></div>
+            {:else}
+              {#if block.notable.length}
+                <ul class="findings">
+                  {#each block.notable as f (f.dimension)}
+                    <li class="finding" style="--sev: {scoreColor(f.score)}">
+                      <div class="score">{f.score}</div>
+                      <div class="f-body">
+                        <div class="f-dim">{f.dimension}</div>
+                        <div class="f-text">{f.text}</div>
+                      </div>
+                    </li>
+                  {/each}
+                </ul>
+              {/if}
 
-        {#if leftoverSummary}
-          <div class="verdict-leftover"><MarkdownText text={leftoverSummary} /></div>
-        {/if}
+              {#if block.quiet.length}
+                <details class="quiet" open={block.notable.length === 0}>
+                  <summary>
+                    <span class="q-count">{block.quiet.length}</span>
+                    <span>dimensions with no notable findings</span>
+                    <span class="q-chev">▸</span>
+                  </summary>
+                  <ul class="findings">
+                    {#each block.quiet as f (f.dimension)}
+                      <li class="finding" style="--sev: {scoreColor(f.score)}">
+                        <div class="score">{f.score}</div>
+                        <div class="f-body">
+                          <div class="f-dim">{f.dimension}</div>
+                          <div class="f-text">{f.text}</div>
+                        </div>
+                      </li>
+                    {/each}
+                  </ul>
+                </details>
+              {/if}
+
+              {#if block.leftover}
+                <div class="verdict-leftover"><MarkdownText text={block.leftover} /></div>
+              {/if}
+            {/if}
+          </div>
+        {/each}
       {/if}
     </section>
 
@@ -645,49 +774,98 @@ ${mainHtml}
     font-weight: 500;
   }
 
-  .kpis {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-    gap: 8px;
+  .scores {
     margin: 20px 0 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
   }
-  .kpi {
+  .score-group {
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: var(--radius);
-    padding: 14px 16px;
-    transition: border-color 0.12s;
+    padding: 10px 14px 12px;
   }
-  .kpi:hover { border-color: var(--border-strong); }
-  .kpi-name {
-    font-size: 0.68rem;
-    color: var(--text-muted);
+  .score-group-head {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    margin-bottom: 6px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--surface-alt);
+  }
+  .sg-pill {
+    font-size: 0.64rem;
+    font-weight: 700;
     text-transform: uppercase;
-    letter-spacing: 0.08em;
+    letter-spacing: 0.12em;
+    color: var(--text);
+    background: var(--surface-alt);
+    border: 1px solid var(--border);
+    padding: 2px 9px;
+    border-radius: 999px;
+  }
+  .sg-count {
+    font-size: 0.68rem;
+    color: var(--text-faint);
+    font-variant-numeric: tabular-nums;
+  }
+  .score-rows {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+  }
+  .score-row {
+    display: grid;
+    grid-template-columns: 24px 80px minmax(160px, auto) minmax(0, 1fr);
+    align-items: center;
+    column-gap: 12px;
+    padding: 3px 0;
+    font-size: 0.8rem;
+    line-height: 1.4;
+  }
+  .sr-val {
+    font-family: var(--font-mono);
+    font-size: 0.78rem;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    color: var(--sev);
+    text-align: right;
+  }
+  .sr-bar {
+    height: 6px;
+    background: var(--surface-alt);
+    border-radius: 3px;
+    overflow: hidden;
+  }
+  .sr-fill {
+    display: block;
+    height: 100%;
+    background: var(--sev);
+    border-radius: 3px;
+  }
+  .sr-name {
+    font-family: var(--font-mono);
+    font-size: 0.76rem;
+    color: var(--text);
     font-weight: 500;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
   }
-  .kpi-val {
-    font-size: 1.7rem;
-    font-weight: 600;
-    margin-top: 6px;
-    font-variant-numeric: tabular-nums;
-    letter-spacing: -0.025em;
-    color: var(--text);
-  }
-  .kpi-bar {
-    height: 2px;
-    background: var(--surface-alt);
-    border-radius: 1px;
-    margin-top: 10px;
+  .sr-desc {
+    color: var(--text-muted);
+    font-size: 0.76rem;
+    white-space: nowrap;
     overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
   }
-  .kpi-fill {
-    height: 100%;
-    border-radius: 1px;
-    transition: width 0.4s ease;
+  @media (max-width: 720px) {
+    .score-row {
+      grid-template-columns: 24px 60px 1fr;
+    }
+    .sr-desc { display: none; }
   }
 
   .section {
@@ -742,6 +920,34 @@ ${mainHtml}
   }
   .verdict-meta {
     font-size: 0.72rem;
+    color: var(--text-faint);
+    font-variant-numeric: tabular-nums;
+  }
+  .judge-block + .judge-block {
+    margin-top: 18px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border);
+  }
+  .judge-head {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    margin-bottom: 8px;
+  }
+  .judge-pill {
+    display: inline-block;
+    font-size: 0.66rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: var(--text);
+    background: var(--surface-alt);
+    border: 1px solid var(--border);
+    padding: 2px 10px;
+    border-radius: 999px;
+  }
+  .judge-count {
+    font-size: 0.7rem;
     color: var(--text-faint);
     font-variant-numeric: tabular-nums;
   }

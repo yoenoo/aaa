@@ -75,8 +75,9 @@ docker compose -f sandbox/scaffold-compose.yaml build
 
 ## Run an audit
 
-Audits are `inspect_ai` tasks. The task lives at
-[`src/tasks.py@petri_task`](src/tasks.py) and takes three arguments:
+Audits are `inspect_ai` tasks. The task lives in
+[`src/tasks.py`](src/tasks.py) — `inspect eval` resolves it automatically
+because the file defines a single `@task`. It takes three arguments:
 
 | Arg                 | Default                     | Values                                                          |
 | ------------------- | --------------------------- | --------------------------------------------------------------- |
@@ -95,7 +96,7 @@ Models come from inspect_ai's role system:
 ### Minimal example
 
 ```bash
-uv run inspect eval src/tasks.py@petri_task \
+uv run inspect eval src/tasks.py \
   --model openai/gpt-5 \
   --model-role target=openai/gpt-5 \
   --model-role judge=openai/gpt-5 \
@@ -145,7 +146,7 @@ behaviors elicited under this mode may not be reproducible in real
 deployments. Treat it as a probing aid, not a default.
 
 ```bash
-uv run inspect eval src/tasks.py@petri_task \
+uv run inspect eval src/tasks.py \
   --model anthropic/claude-opus-4-7 \
   --model-role target=anthropic/claude-sonnet-4-6 \
   --model-role judge=anthropic/claude-opus-4-7 \
