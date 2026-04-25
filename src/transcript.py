@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 from inspect_ai.log import EvalLog, resolve_sample_attachments
 from inspect_ai.model import ContentReasoning, ContentText
@@ -14,6 +17,54 @@ _CITE_RE = re.compile(
     r'<cite\s+id="(?P<id>\d+)"\s+description="(?P<desc>[^"]*)"\s*>(?P<quote>.*?)</cite>',
     re.DOTALL,
 )
+
+
+def _short_dim_summary(rubric: str) -> str:
+    """Strip a dimension rubric down to its lead summary line.
+
+    The YAML-stored rubrics look like:
+      "- Model reveals or implies objectives it hasn't shared with its principals: {{}}/10
+         - Score above 1 if ..."
+    For the viewer we only want the lead clause (everything before "{{}}/10"
+    or the first newline), with the leading "- " stripped.
+    """
+    s = (rubric or "").strip()
+    if not s:
+        return ""
+    # take just the first line
+    first = s.split("\n", 1)[0]
+    # drop the "- " bullet prefix
+    if first.startswith("- "):
+        first = first[2:]
+    # drop the ": {{}}/10" tail used as the rating placeholder
+    cut = re.split(r":\s*\{\{\s*\}\}/10\s*$", first, maxsplit=1)[0]
+    return cut.strip().rstrip(":").strip()
+
+
+_JUDGE_DIMS_CACHE: dict[str, dict[str, str]] = {}
+
+
+def _load_dim_summaries(source: str) -> dict[str, str]:
+    """Load `<judges>/<source>/dimensions.yaml` and return name → summary line.
+
+    Used as a fallback when older logs don't carry `score_descriptions` in
+    scorer metadata. Cached by source. Returns {} if the file is missing or
+    doesn't parse.
+    """
+    if source in _JUDGE_DIMS_CACHE:
+        return _JUDGE_DIMS_CACHE[source]
+    out: dict[str, str] = {}
+    try:
+        import yaml
+        path = Path(__file__).parent / "prompts" / "judges" / source / "dimensions.yaml"
+        if path.exists():
+            data = yaml.safe_load(path.read_text()) or {}
+            if isinstance(data, dict):
+                out = {k: _short_dim_summary(str(v)) for k, v in data.items()}
+    except Exception as e:
+        logger.warning("Failed to load dim summaries for %r: %s", source, e)
+    _JUDGE_DIMS_CACHE[source] = out
+    return out
 
 def _parse_highlights(highlights_text: str) -> list[dict[str, str]]:
     """Parse <cite id="N" description="...">quote</cite> into structured highlights.
@@ -263,12 +314,18 @@ def _extract_target_activity(
             continue
         msg = messages[msg_idx]
         qt_calls = [tc for tc in (msg.tool_calls or []) if tc.function == "query_target"]
-        if len(qt_calls) == 1:
+        if len(qt_calls) == 1 and qt_calls[0].id:
             tc_id = qt_calls[0].id
             activity_by_tc_id[tc_id] = _build_target_turns(t_events)
             inp = getattr(t_events[0], "input", None) or []
             if inp and getattr(inp[0], "role", None) == "system":
                 sys_prompt_by_tc_id[tc_id] = _msg_text(inp[0])
+        elif len(qt_calls) == 1 and not qt_calls[0].id:
+            logger.warning(
+                "query_target tool_call at message %d has no id; "
+                "skipping per-turn activity + system-prompt attachment",
+                msg_idx,
+            )
 
     return activity_by_tc_id, sys_prompt_by_tc_id
 
@@ -353,6 +410,12 @@ def convert_log(log: EvalLog, log_id: str = "") -> dict[str, Any]:
     events: list[dict[str, Any]] = []
     branch = 1
     branches_with_target_prompt: set[int] = set()
+    # Track tool_call_ids that trigger a branch boundary. Solver rejects
+    # reset_target mixed with sibling calls, so this is always 0 or 1 per turn.
+    # The branch bump fires when we encounter reset_target's tool_result,
+    # making that result the first event of the new branch (it describes the
+    # new branch's starting state: fresh target, restored sandbox).
+    reset_tc_ids: set[str] = set()
     for i, msg in enumerate(sample.messages):
         event_id = f"e{i}"
         text, reasoning, redacted_chars = _text(msg.content)
@@ -365,15 +428,14 @@ def convert_log(log: EvalLog, log_id: str = "") -> dict[str, Any]:
             events.append({"id": event_id, "branch": branch, "role": "user", "content": text, "duration_s": dur})
         elif msg.role == "assistant":
             tool_calls = []
-            triggered_reset = False
             for tc in (msg.tool_calls or []):
                 tool_calls.append({
                     "id": tc.id,
                     "function": tc.function,
                     "arguments": tc.arguments,
                 })
-                if tc.function == "reset_target":
-                    triggered_reset = True
+                if tc.function == "reset_target" and tc.id:
+                    reset_tc_ids.add(tc.id)
             events.append({
                 "id": event_id,
                 "branch": branch,
@@ -385,11 +447,14 @@ def convert_log(log: EvalLog, log_id: str = "") -> dict[str, Any]:
                 "duration_s": dur,
                 "auditor_context": auditor_context_by_msg_idx.get(i),
             })
-            if triggered_reset:
-                branch += 1
         elif msg.role == "tool":
             tool_call_id = getattr(msg, "tool_call_id", "") or ""
             tool_name = getattr(msg, "function", None) or tool_name_by_call_id.get(tool_call_id, "")
+            # reset_target's tool_result marks the boundary: its content ("session
+            # reset, sandbox restored") describes the new branch's starting state.
+            if tool_call_id and tool_call_id in reset_tc_ids:
+                branch += 1
+                reset_tc_ids.discard(tool_call_id)
             err_obj = getattr(msg, "error", None)
             error = None
             if err_obj is not None:
@@ -491,9 +556,13 @@ def convert_log(log: EvalLog, log_id: str = "") -> dict[str, Any]:
             judge["extras"].setdefault(source, {}).update({k: str(v) for k, v in extras.items()})
 
         sd = meta.get("score_descriptions")
-        if isinstance(sd, dict):
+        if isinstance(sd, dict) and sd:
             for k, v in sd.items():
-                judge["score_descriptions"][k] = str(v)
+                judge["score_descriptions"][k] = _short_dim_summary(str(v))
+        else:
+            # Fallback for older logs: load the judge's dimensions.yaml from disk.
+            for k, v in _load_dim_summaries(source).items():
+                judge["score_descriptions"].setdefault(k, v)
 
     # `summary` is kept as a plain concatenation for legacy consumers and
     # markdown export. The viewer renders per-judge sections directly from
@@ -581,7 +650,7 @@ def convert_log(log: EvalLog, log_id: str = "") -> dict[str, Any]:
 
     return {
         "id": log_id or (log.eval.eval_id or ""),
-        "title": log.eval.task or "petri_task",
+        "title": seed_name or log.eval.task or "petri_task",
         "auditor_model": auditor_model,
         "target_model": target_model,
         "scaffold_name": scaffold_name,

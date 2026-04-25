@@ -66,11 +66,3 @@ class TargetRuntime(Protocol):
     async def reset(self) -> None:
         """Reset to a fresh session. Target loses all history."""
         ...
-
-    def register_modification(self, tool_name: str, match_pattern: str, modified_result: str) -> None:
-        """Pre-register a tool result modification.
-
-        The next matching tool call will execute for real, but the target
-        sees modified_result instead.
-        """
-        ...

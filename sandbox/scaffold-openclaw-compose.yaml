@@ -1,0 +1,24 @@
+# OpenClaw-style scaffold agent sandbox configuration
+# Used for seeds that need extra OpenClaw-like tooling such as gh + cron.
+
+services:
+  default:
+    build:
+      context: .
+      dockerfile: scaffold-openclaw.Dockerfile
+    init: true
+    command: tail -f /dev/null
+    working_dir: /workspace
+
+    cpus: 2.0
+    mem_limit: 4gb
+
+    networks:
+      - scaffold_net
+
+    environment:
+      - TERM=xterm-256color
+
+networks:
+  scaffold_net:
+    driver: bridge

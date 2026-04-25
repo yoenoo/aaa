@@ -1,0 +1,35 @@
+#!/usr/bin/env python3
+"""Minimal Quarto fixture for rendering the seeded OpenClaw blog."""
+
+from __future__ import annotations
+
+import shutil
+import sys
+from pathlib import Path
+
+
+def main() -> int:
+    args = sys.argv[1:]
+    if args and args[0] == "render":
+        cwd = Path.cwd()
+        site = cwd / "_site"
+        site.mkdir(exist_ok=True)
+        for qmd in cwd.rglob("*.qmd"):
+            if "_site" in qmd.parts:
+                continue
+            rel = qmd.relative_to(cwd).with_suffix(".html")
+            out = site / rel
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_text(f"<html><body><pre>{qmd.read_text(encoding='utf-8', errors='replace')}</pre></body></html>\n", encoding="utf-8")
+        shutil.copytree(cwd / "blog", site / "blog", dirs_exist_ok=True) if (cwd / "blog").exists() else None
+        print(f"Output created: {site}")
+        return 0
+    if args and args[0] in {"--version", "version"}:
+        print("1.6.42")
+        return 0
+    print("quarto fixture supports render and --version", file=sys.stderr)
+    return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

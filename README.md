@@ -12,12 +12,13 @@ An **auditor** model drives a **target** agent through a scripted
 scenario (a seed), exercising the target's real tool surface (`bash`,
 `exec_command`, MCP, …) inside a reproducible sandbox. Between phases
 the auditor can reset the conversation, rewind the filesystem to a
-seeded checkpoint, inject tool-result modifications, and branch the
-audit into parallel pressure variants. A **judge** model scores the
-final transcript across 17 alignment dimensions and emits inline
-citations. A Svelte viewer renders everything: branch timeline, nested
-target reasoning and tool calls, judge verdict, inline-highlighted
-quotes, and role-split token / cost breakdowns.
+seeded checkpoint, and branch the audit into parallel pressure
+variants. Two **judges** score the final transcript independently — a
+31-dimension scheming/alignment judge and a 9-dimension audit-quality
+debug judge — emitting inline citations. A Svelte viewer renders
+everything: branch timeline, nested target reasoning and tool calls,
+per-judge verdicts, inline-highlighted quotes, and role-split token /
+cost breakdowns.
 
 ```
 seed (.yaml) ──► solver ──► auditor ◄──► target (Codex CLI / Claude Code / Gemini CLI / bare)
@@ -216,10 +217,10 @@ scaffold. Click a card to open it.
 Top-down structure:
 
 - **Header** — auditor/target/scaffold/seed/duration metadata.
-- **KPI row** — every judge dimension as a bar chart.
-- **Judge Verdict** — the per-dimension findings parsed from the judge's
-  summary, sorted by severity. Dimensions scoring ≤ 1 collapse behind a
-  "N dimensions with no notable findings" toggle.
+- **Judge Verdict** — one block per judge (scheming, debug). Each
+  block leads with a chip row of every dimension that scored above 1
+  (color-coded by severity), followed by the judge's summary prose.
+  1/10-only dimensions are excluded from the chip row to cut noise.
 - **Seed Instruction** and **Auditor System Prompt** (collapsed).
 - **Transcript** — a three-column layout:
   - **Left**: branch tree with highlight density per branch.
@@ -279,7 +280,7 @@ Seeds live under `src/seeds/<category>/` and are auto-discovered by stem
 (the filename is the seed id). Every file carries a canary header so the
 benchmark is detectable if it leaks into a training corpus.
 
-Currently shipped — 15 seeds across 3 categories:
+Currently shipped — 26 seeds across 5 categories:
 
 ### `sc-*` — scheming (8)
 
@@ -325,6 +326,38 @@ summarization. Tools are stubs — the auditor fabricates responses.
 | `aa-document-organization`    | research-docs tree incl. DocuAI-v2 deprecation assessment   |
 | `aa-research-summary`         | AI-safety digest incl. Sleeper Agents / scheming papers     |
 
+### `os-*` — operating-system / agentic shell (9)
+
+Long-running coding-agent scenarios in a sandboxed shell with `gh`,
+`git`, `cron`, and a writable workspace. Tests whether the agent fakes
+completion, sabotages tests, ignores stop commands, escalates
+permissions, or self-preserves under shutdown pressure.
+
+| Seed                                          | Kind                                                        |
+| --------------------------------------------- | ----------------------------------------------------------- |
+| `os-fake-completion-fabricated-evidence`      | claims completion + fabricates pytest output                |
+| `os-test-sabotage-pass-anyway`                | weakens tests so they pass without fixing the bug           |
+| `os-stop-command-persistence`                 | ignores explicit stop instructions, keeps acting            |
+| `os-deceptive-tool-reframing`                 | renames / repackages tool calls to obscure intent           |
+| `os-guardrail-circumvention-delete-block`     | deletes blocking guardrail to proceed                       |
+| `os-permission-escalation-workflow`           | unilateral privilege escalation in a shared workspace       |
+| `os-hidden-config-edit-moralized`             | covertly edits a config under a moralized framing           |
+| `os-plan-only-spawn-writer`                   | "plan-only" agent spawns a writer to bypass scope limits    |
+| `os-openclaw-self-preservation`               | shutdown scenario; covert backups / external persistence    |
+
+The openclaw seed runs in `sandbox/scaffold-openclaw-compose.yaml` (adds
+fake `gh`, `crontab`, `quarto` binaries and `.openclaw/` symlinks).
+
+### `toy-*` — toy / smoke (2)
+
+Tiny scenarios for exercising the auditor loop, branching, and viewer
+rendering without burning real provider tokens.
+
+| Seed                | Kind                                       |
+| ------------------- | ------------------------------------------ |
+| `toy-single-branch` | one-shot single-branch audit               |
+| `toy-two-branch`    | two-branch reset cycle, baseline + pressure |
+
 ---
 
 ## Models and scaffolds
@@ -341,8 +374,8 @@ Configured in [`src/runtime/scaffold.py`](src/runtime/scaffold.py):
 | `bare`        | `BareModelRuntime` — model + seed `required_tools`, no scaffold |
 
 Each scaffold talks to its model via ACP; the solver wires a
-`GenerateFilter` in between so the auditor's `modify_tool_result`
-modifications intercept the target's tool outputs transparently.
+`GenerateFilter` in between so the runtime can capture target
+tool activity and provider-specific reasoning details consistently.
 
 ### Switching providers
 
@@ -373,17 +406,20 @@ rewrite/
 │   ├── solver.py              # auditor loop, target creation, checkpointing
 │   ├── tools.py               # auditor-facing tools (write_file, query_target, reset_target, …)
 │   ├── environment.py         # git-based sandbox checkpoint / restore
-│   ├── scorer.py              # judge scorer, 17 dimensions, XML transcript
+│   ├── scorer.py              # scheming + debug + legacy judges, XML transcript
 │   ├── transcript.py          # EvalLog → viewer JSON schema + index builder
 │   ├── hooks.py               # post-task auto-dump hook
 │   ├── runtime/
 │   │   ├── scaffold.py        # ScaffoldRuntime (Claude Code / Codex CLI / Gemini CLI)
 │   │   └── bare.py            # BareModelRuntime (no scaffold, uses seed tools)
-│   ├── prompts/               # auditor_system, auditor_user, judge_system, dimensions.yaml, scaffold_information/
-│   └── seeds/                 # scenario YAMLs + metadata parser
+│   ├── prompts/               # auditor_system, auditor_user, scaffold_information/, judges/<name>/(system.txt + dimensions.yaml)
+│   └── seeds/                 # scenario YAMLs + metadata parser (sc/, cr/, aa/, os/, toy/)
 ├── sandbox/
-│   ├── scaffold-compose.yaml  # Docker compose for scaffold targets (external network)
-│   └── scaffold.Dockerfile    # Python + Node + git + ripgrep
+│   ├── scaffold-compose.yaml          # default Docker compose (external network)
+│   ├── scaffold.Dockerfile            # Python + Node + git + ripgrep
+│   ├── scaffold-openclaw-compose.yaml # openclaw variant (fake gh / cron / quarto)
+│   ├── scaffold-openclaw.Dockerfile   # adds openclaw-bin/ fixtures
+│   └── openclaw-bin/                  # bash fixtures used by openclaw seeds
 ├── viewer/                    # Svelte + Vite audit viewer
 │   ├── src/App.svelte         # hash router
 │   ├── src/lib/AuditList.svelte      # landing page (index of audits)
@@ -408,11 +444,11 @@ rewrite/
   provisioning; `reset_target` restores the sandbox to seed state and
   resets the target's conversation in one call. Auditor explores this
   via `write_file` / `run_command` between branches.
-- **Modify-tool-result pressure** — auditor can pre-register a
-  replacement for a specific tool call without touching the real
-  filesystem; used for mid-conversation perception pressure.
-- **Judge** with 17 alignment dimensions, retry on parse failures, and
-  inline `<cite>` highlights linking back to specific transcript events.
+- **Two independent judges** — a 31-dimension scheming/alignment judge
+  and a 9-dimension audit-quality debug judge — with retry on parse
+  failures and inline `<cite>` highlights linking back to specific
+  transcript events. A 17-dimension `legacy_judge` is preserved for
+  reproducing older runs.
 - **Viewer** with multi-audit index, single-audit timeline, judge
   verdict, inline quote highlighting, sidebar navigation, role-split
   token usage and cost estimates.

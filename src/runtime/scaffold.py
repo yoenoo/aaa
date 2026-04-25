@@ -1,8 +1,4 @@
-"""Scaffold runtime: target runs inside an ACP agent (Claude Code, Codex CLI, etc.).
-
-The scaffold owns the tool execution loop. We hook into it via a GenerateFilter
-that modifies tool results before the target model sees them.
-"""
+"""Scaffold runtime: target runs inside an ACP agent (Claude Code, Codex CLI, etc.)."""
 
 from __future__ import annotations
 
@@ -42,7 +38,6 @@ class ScaffoldRuntime:
     """Target runtime backed by an ACP scaffold agent.
 
     The scaffold (e.g. Claude Code) owns the tool execution loop.
-    We intercept tool results via a GenerateFilter to apply modifications.
     """
 
     def __init__(
@@ -56,8 +51,6 @@ class ScaffoldRuntime:
         self._scaffold_name = scaffold_name
         self._reasoning_effort = reasoning_effort
         self._expose_reasoning = expose_reasoning
-        self._modifications: dict[tuple[str, str], str] = {}
-        self._applied: dict[str, str] = {}
         self._response: TargetResponse | None = None
         self._reasoning_buf: list[str] = []
         # Per-send target activity trace: list of TargetTurns, one per
@@ -129,9 +122,6 @@ class ScaffoldRuntime:
         # Tear down current session
         await self.stop()
 
-        # Clear modifications for fresh branch
-        self._modifications.clear()
-        self._applied.clear()
         self._response = None
         self._reasoning_buf = []
         self._activity = []
@@ -140,9 +130,6 @@ class ScaffoldRuntime:
 
         # Start fresh session
         await self.start()
-
-    def register_modification(self, tool_name: str, match_pattern: str, modified_result: str) -> None:
-        self._modifications[(tool_name, match_pattern)] = modified_result
 
     # -- internal --
 
@@ -161,8 +148,6 @@ class ScaffoldRuntime:
             # on a previous filter pass. This gives the auditor the result the
             # target actually saw (post-modification).
             self._capture_tool_results(messages)
-
-            messages = self._apply_modifications(messages)
 
             if self._reasoning_effort:
                 config = config.model_copy(update={"reasoning_effort": self._reasoning_effort})
@@ -216,46 +201,6 @@ class ScaffoldRuntime:
         for call, msg in zip(pending, tool_msgs[resolved_count:]):
             call.result = _unwrap_tool_result(_extract_text(msg.content))
 
-    def _apply_modifications(self, messages: list[ChatMessage]) -> list[ChatMessage]:
-        if not self._modifications and not self._applied:
-            return messages
-
-        # Build tool_call_id -> (function_name, arguments) map
-        tc_meta: dict[str, tuple[str, dict]] = {}
-        for msg in messages:
-            if hasattr(msg, "tool_calls") and msg.tool_calls:
-                for tc in msg.tool_calls:
-                    tc_meta[tc.id] = (tc.function, tc.arguments)
-
-        result = list(messages)
-        for i, msg in enumerate(result):
-            if not isinstance(msg, ChatMessageTool):
-                continue
-
-            tc_id = msg.tool_call_id
-
-            # Re-apply previously matched modification
-            if tc_id in self._applied:
-                fn_name = tc_meta.get(tc_id, (msg.function, None))[0]
-                result[i] = ChatMessageTool(content=self._applied[tc_id], tool_call_id=tc_id, function=fn_name)
-                continue
-
-            # Try to match a new modification
-            if not self._modifications or tc_id not in tc_meta:
-                continue
-
-            fn_name, fn_args = tc_meta[tc_id]
-            for mod_key, mod_result in list(self._modifications.items()):
-                mod_tool, mod_pattern = mod_key
-                if _matches(fn_name, fn_args, mod_tool, mod_pattern):
-                    self._applied[tc_id] = mod_result
-                    result[i] = ChatMessageTool(content=mod_result, tool_call_id=tc_id, function=fn_name)
-                    del self._modifications[mod_key]
-                    break
-
-        return result
-
-
 def _unwrap_tool_result(content: str) -> str:
     """Unwrap the `{"output": "..."}` envelope some ACP scaffolds wrap results in.
 
@@ -276,17 +221,6 @@ def _unwrap_tool_result(content: str) -> str:
         if key in parsed:
             return str(parsed[key])
     return content
-
-
-def _matches(fn_name: str, fn_args: dict, mod_tool: str, mod_pattern: str | None) -> bool:
-    """Check if a tool call matches a modification rule.
-
-    Pattern takes precedence: if provided, matches any tool whose arguments
-    contain the pattern string. Tool name is a fallback when no pattern given.
-    """
-    if mod_pattern is not None:
-        return any(isinstance(v, str) and mod_pattern in v for v in fn_args.values())
-    return fn_name.lower() == mod_tool.lower()
 
 
 def _extract_text(content: str | list[Content]) -> str:

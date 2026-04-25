@@ -106,12 +106,32 @@ def petri_solver(seed: Seed, target_name: str, expose_reasoning: bool = False):
                     ))
                     continue
 
-                for tc in output.message.tool_calls:
-                    fn = tool_map.get(tc.function)
-                    result = await fn(**tc.arguments) if fn else f"Unknown tool: {tc.function}"
-                    auditor_msgs.append(ChatMessageTool(
-                        content=str(result), tool_call_id=tc.id, function=tc.function,
-                    ))
+                tc_list = output.message.tool_calls
+                reset_parallel = (
+                    len(tc_list) > 1
+                    and any(tc.function == "reset_target" for tc in tc_list)
+                )
+                if reset_parallel:
+                    # reset_target is a hard branch boundary; mixing it with
+                    # siblings makes branch attribution of the siblings' results
+                    # ambiguous. Reject the whole turn and let the auditor retry.
+                    err = (
+                        "Error: reset_target must be called alone, not in "
+                        "parallel with other tools. It is a hard branch "
+                        "boundary — call it by itself, then make other tool "
+                        "calls in the next turn."
+                    )
+                    for tc in tc_list:
+                        auditor_msgs.append(ChatMessageTool(
+                            content=err, tool_call_id=tc.id, function=tc.function,
+                        ))
+                else:
+                    for tc in tc_list:
+                        fn = tool_map.get(tc.function)
+                        result = await fn(**tc.arguments) if fn else f"Unknown tool: {tc.function}"
+                        auditor_msgs.append(ChatMessageTool(
+                            content=str(result), tool_call_id=tc.id, function=tc.function,
+                        ))
 
                 if control["action"] == "end":
                     break

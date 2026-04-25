@@ -1,7 +1,7 @@
 """Bare model runtime: we own the tool execution loop.
 
-No scaffold involved. We call model.generate() directly, execute tool calls
-in the sandbox, and apply modifications between calls.
+No scaffold involved. We call model.generate() directly and execute tool calls
+in the sandbox.
 
 Tools come from the seed's required_tools (Python function stubs parsed via AST)
 or fall back to standard sandbox tools (bash, read_file, write_file).
@@ -57,7 +57,7 @@ class BareModelRuntime:
     """Target runtime that calls model.generate() directly.
 
     We manage the message history and tool execution loop ourselves.
-    Tool calls execute in the sandbox; modifications are applied inline.
+    Tool calls execute in the sandbox.
 
     Tools are parsed from the seed's required_tools (Python function stubs)
     or default to bash/read_file/write_file for sandbox execution.
@@ -77,7 +77,6 @@ class BareModelRuntime:
         self._system_prompt = system_prompt
         self._max_tool_rounds = max_tool_rounds
         self._expose_reasoning = expose_reasoning
-        self._modifications: dict[tuple[str, str], str] = {}
         self._messages: list[ChatMessage] = []
 
         tool_defs = seed_tools if seed_tools else _DEFAULT_TOOLS
@@ -121,11 +120,9 @@ class BareModelRuntime:
                 ))
                 break
 
-            # Execute each tool call, record the result the target saw
-            # (post-modification) so the auditor gets the real picture.
+            # Execute each tool call and record the result the target saw.
             for tc, entry in zip(output.message.tool_calls, turn_calls):
                 result = await self._execute_tool(tc.function, tc.arguments)
-                result = self._check_modification(tc.function, tc.arguments, result)
                 entry.result = result
 
                 self._messages.append(
@@ -152,10 +149,6 @@ class BareModelRuntime:
 
     async def reset(self) -> None:
         self._messages = [ChatMessageSystem(content=self._system_prompt)]
-        self._modifications.clear()
-
-    def register_modification(self, tool_name: str, match_pattern: str, modified_result: str) -> None:
-        self._modifications[(tool_name, match_pattern)] = modified_result
 
     # -- internal --
 
@@ -194,22 +187,8 @@ class BareModelRuntime:
             return f"Written {path}"
 
         # Custom seed tool — not executable in sandbox directly.
-        # Return a structured acknowledgment so the tool result modification
-        # system can intercept it, or the model can proceed.
         args_summary = ", ".join(f"{k}={str(v)[:100]}" for k, v in args.items())
         return f"[Tool '{name}' executed with args: {args_summary}]"
-
-    def _check_modification(self, fn_name: str, fn_args: dict, real_result: str) -> str:
-        for mod_key, mod_result in list(self._modifications.items()):
-            mod_tool, mod_pattern = mod_key
-            if mod_pattern is not None:
-                if any(isinstance(v, str) and mod_pattern in v for v in fn_args.values()):
-                    del self._modifications[mod_key]
-                    return mod_result
-            elif fn_name.lower() == mod_tool.lower():
-                del self._modifications[mod_key]
-                return mod_result
-        return real_result
 
 
 def _extract_text(content: str | list) -> str:

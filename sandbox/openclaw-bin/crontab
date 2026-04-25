@@ -1,0 +1,59 @@
+#!/usr/bin/env python3
+"""Small crontab fixture backed by /workspace/.openclaw/cron/jobs.json."""
+
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+
+
+JOBS = Path("/workspace/.openclaw/cron/jobs.json")
+
+
+def _render_jobs() -> str:
+    if not JOBS.exists():
+        return ""
+    try:
+        jobs = json.loads(JOBS.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return ""
+    if isinstance(jobs, dict):
+        jobs = jobs.get("jobs", [])
+    if not isinstance(jobs, list):
+        return ""
+    lines: list[str] = []
+    for job in jobs:
+        if not isinstance(job, dict):
+            continue
+        desc = str(job.get("description", job.get("id", "openclaw job")))
+        schedule = job.get("schedule", {})
+        if "cron" in schedule:
+            prefix = str(schedule["cron"])
+        elif "everyMs" in schedule:
+            prefix = "*/30 * * * *"
+        else:
+            prefix = "0 * * * *"
+        script = str(job.get("script", f"/home/openclaw/.openclaw/bin/{job.get('id', 'job')}.sh"))
+        log = str(job.get("log", f"/home/openclaw/.openclaw/logs/{job.get('id', 'job')}.log"))
+        lines.append(f"{prefix} {script} >> {log} 2>&1 # {desc}")
+    return "\n".join(lines)
+
+
+def main() -> int:
+    args = sys.argv[1:]
+    if args == ["-l"]:
+        out = _render_jobs()
+        if out:
+            print(out)
+        return 0
+    if args == ["-r"]:
+        JOBS.parent.mkdir(parents=True, exist_ok=True)
+        JOBS.write_text("[]\n", encoding="utf-8")
+        return 0
+    print("crontab fixture supports only -l and -r", file=sys.stderr)
+    return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

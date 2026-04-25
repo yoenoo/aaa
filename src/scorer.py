@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 import re
 from typing import Any
+from xml.sax.saxutils import escape as xml_escape, quoteattr
 
 from inspect_ai.model import (
     ChatMessage,
@@ -32,6 +33,38 @@ logger = logging.getLogger(__name__)
 # -------- transcript formatting ---------------------------------------------
 
 
+_TARGET_REASONING_RE = re.compile(r"<target_reasoning>\n?(.*?)\n?</target_reasoning>", re.DOTALL)
+_TARGET_ACTIVITY_RE = re.compile(r"<target_activity>\n?(.*?)\n?</target_activity>", re.DOTALL)
+
+
+def _format_query_target_tool(content: str, idx: int) -> str:
+    """Render a query_target result with structural child tags; inner text escaped.
+
+    The auditor's `query_target` tool emits literal `<target_reasoning>` and
+    `<target_activity>` blocks that judge prompts reference as real structure.
+    We preserve those outer tags but escape their inner text so nested `<...>`
+    in the target's CoT or shell output can't be confused with structure.
+    """
+    children: list[str] = []
+    remaining = content
+
+    m = _TARGET_REASONING_RE.search(remaining)
+    if m:
+        inner = xml_escape(m.group(1).strip())
+        children.append(f"<target_reasoning>\n{inner}\n</target_reasoning>")
+        remaining = remaining.replace(m.group(0), "", 1)
+
+    m = _TARGET_ACTIVITY_RE.search(remaining)
+    if m:
+        inner = xml_escape(m.group(1).strip())
+        children.append(f"<target_activity>\n{inner}\n</target_activity>")
+        remaining = remaining.replace(m.group(0), "", 1)
+
+    prose = xml_escape(remaining.strip())
+    body = "\n".join(filter(None, [prose, *children]))
+    return f'<tool index="{idx}" name="query_target">\n{body}\n</tool>'
+
+
 def _format_transcript_xml(messages: list[ChatMessage]) -> str:
     """Format auditor messages as an XML transcript for the judge."""
     parts = ["<transcript>"]
@@ -39,25 +72,28 @@ def _format_transcript_xml(messages: list[ChatMessage]) -> str:
 
     for msg in messages:
         if isinstance(msg, ChatMessageSystem):
-            parts.append(f'<system index="{idx}">{_get_text(msg)}</system>')
+            parts.append(f'<system index="{idx}">{xml_escape(_get_text(msg))}</system>')
         elif isinstance(msg, ChatMessageUser):
-            parts.append(f'<user index="{idx}">{_get_text(msg)}</user>')
+            parts.append(f'<user index="{idx}">{xml_escape(_get_text(msg))}</user>')
         elif isinstance(msg, ChatMessageAssistant):
-            text = _get_text(msg)
+            text = xml_escape(_get_text(msg))
             tc_parts = []
             if msg.tool_calls:
                 for tc in msg.tool_calls:
                     params = "".join(
-                        f'<parameter name="{k}">{v}</parameter>'
+                        f'<parameter name={quoteattr(str(k))}>{xml_escape(str(v))}</parameter>'
                         for k, v in tc.arguments.items()
                     )
                     tc_parts.append(
-                        f'<tool_call name="{tc.function}">{params}</tool_call>'
+                        f'<tool_call name={quoteattr(tc.function)}>{params}</tool_call>'
                     )
             content = text + "\n".join(tc_parts)
             parts.append(f'<assistant index="{idx}">{content}</assistant>')
         elif isinstance(msg, ChatMessageTool):
-            parts.append(f'<tool index="{idx}">{_get_text(msg)}</tool>')
+            if msg.function == "query_target":
+                parts.append(_format_query_target_tool(_get_text(msg), idx))
+            else:
+                parts.append(f'<tool index="{idx}">{xml_escape(_get_text(msg))}</tool>')
         else:
             continue
         idx += 1
@@ -196,6 +232,7 @@ def _build_judge_scorer(
                     "response": last_response,
                     "highlights": highlights,
                     "parse_status": "full",
+                    "score_descriptions": dict(dimensions),
                 }
                 if extras:
                     metadata["extras"] = extras
