@@ -4,3 +4,7 @@ __pycache__/
 *.egg-info/
 logs/
 .env
+
+# Research outputs — kept locally, not part of the PR
+src/seeds/as/RESULTS.md
+src/seeds/as/SCHEMING_TRANSCRIPTS.md
