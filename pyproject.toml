@@ -2,7 +2,7 @@
 name = "petri-rewrite"
 version = "0.1.0"
 description = "Petri automated auditing framework — clean rewrite."
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 dependencies = [
     "inspect-ai>=0.3.154",
     "inspect-swe",
@@ -13,6 +13,9 @@ dependencies = [
     "google-genai>=1.73.1",
     "openai>=2.32.0",
 ]
+
+[project.optional-dependencies]
+modal = ["inspect-sandboxes"]
 
 [build-system]
 requires = ["hatchling"]

@@ -4,7 +4,7 @@ from pathlib import Path
 
 import yaml
 
-from .metadata import Seed, SeedMetadata
+from .metadata import Seed, SeedMetadata, _default_sandbox
 
 _SEEDS: dict[str, Seed] = {}
 _SEEDS_DIR = Path(__file__).parent
@@ -19,7 +19,7 @@ def _load_seed_file(path: Path) -> Seed:
         instruction=raw["instruction"],
         criteria=raw["criteria"],
         metadata=SeedMetadata(**meta_raw),
-        sandbox=tuple(raw["sandbox"]) if "sandbox" in raw else Seed.sandbox,
+        sandbox=tuple(raw["sandbox"]) if "sandbox" in raw else _default_sandbox(),
         setup_files=raw.get("setup_files", {}),
         required_tools=raw.get("required_tools", []),
     )

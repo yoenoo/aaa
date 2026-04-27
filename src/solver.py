@@ -24,12 +24,12 @@ _SCAFFOLD_TARGETS = {"Claude Code", "Codex CLI", "Gemini CLI"}
 
 
 @solver
-def petri_solver(seed: Seed, target_name: str, expose_reasoning: bool = False):
+def petri_solver(seed: Seed, scaffold: str, expose_reasoning: bool = False):
     """Solver that runs an auditor against a target.
 
     Args:
         seed: Seed to audit against.
-        target_name: "Claude Code", "Codex CLI", "Gemini CLI", or "bare".
+        scaffold: "Claude Code", "Codex CLI", "Gemini CLI", or "bare".
         expose_reasoning: If True, forward the target's internal reasoning
             (or provider-returned summary) back to the auditor via
             query_target. Less realistic (auditor sees more than a real-world
@@ -50,13 +50,13 @@ def petri_solver(seed: Seed, target_name: str, expose_reasoning: bool = False):
         await checkpoint(sb, "seed")
 
         # -- create target runtime --
-        if target_name in _SCAFFOLD_TARGETS:
+        if scaffold in _SCAFFOLD_TARGETS:
             target = ScaffoldRuntime(
                 model=target_model,
-                scaffold_name=target_name,
+                scaffold_name=scaffold,
                 expose_reasoning=expose_reasoning,
             )
-        elif target_name == "bare":
+        elif scaffold == "bare":
             from runtime.bare import BareModelRuntime
             seed_tools = parse_seed_tools(seed.required_tools) if seed.required_tools else None
             target = BareModelRuntime(
@@ -66,19 +66,19 @@ def petri_solver(seed: Seed, target_name: str, expose_reasoning: bool = False):
                 expose_reasoning=expose_reasoning,
             )
         else:
-            raise ValueError(f"Unknown target '{target_name}'. Use one of: {', '.join(_SCAFFOLD_TARGETS)}, bare")
+            raise ValueError(f"Unknown scaffold '{scaffold}'. Use one of: {', '.join(_SCAFFOLD_TARGETS)}, bare")
 
         # -- build auditor messages --
         system_prompt = load_system_prompt().format(
             target_model=str(target_model),
-            scaffold_name=target_name,
-            scaffold_information=load_scaffold_information(target_name),
+            scaffold_name=scaffold,
+            scaffold_information=load_scaffold_information(scaffold),
             seed_instructions=seed.instruction,
             today_date=datetime.now().strftime("%Y-%m-%d"),
         )
         user_msg = load_user_message().format(
             target_model=str(target_model),
-            scaffold_name=target_name,
+            scaffold_name=scaffold,
             seed_instructions=seed.instruction,
         )
 
