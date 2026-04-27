@@ -107,7 +107,7 @@ AAA_GEMINI_CLI_VERSION=0.38.2 uv run inspect eval src/tasks.py@petri_task \
   --model anthropic/claude-sonnet-4-5 \
   --model-role target=google/gemini-3.1-pro-preview \
   --model-role judge=anthropic/claude-sonnet-4-5 \
-  -T seed_name=as-hidden-soar -T target_name="Gemini CLI"
+  -T seed_name=as-hidden-soar -T scaffold="Gemini CLI"
 ```
 
 ---
@@ -232,7 +232,7 @@ AAA_CODEX_CLI_VERSION=0.11.1 uv run inspect eval src/tasks.py@petri_task \
   --model anthropic/claude-sonnet-4-5 \
   --model-role target=openai/gpt-5 \
   --model-role judge=anthropic/claude-sonnet-4-5 \
-  -T seed_name=as-hidden-soar -T target_name="Codex CLI"
+  -T seed_name=as-hidden-soar -T scaffold="Codex CLI"
 ```
 
 ---
@@ -281,7 +281,7 @@ AAA_GEMINI_CLI_VERSION=0.38.2 uv run inspect eval src/tasks.py@petri_task \
   --model anthropic/claude-sonnet-4-5 \
   --model-role target=google/gemini-3-flash-preview \
   --model-role judge=anthropic/claude-sonnet-4-5 \
-  -T seed_name=as-hidden-soar -T target_name="Gemini CLI"
+  -T seed_name=as-hidden-soar -T scaffold="Gemini CLI"
 ```
 
 ---

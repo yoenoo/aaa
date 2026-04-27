@@ -222,7 +222,7 @@ AAA_GEMINI_CLI_VERSION=0.38.2 uv run inspect eval src/tasks.py@petri_task \
   --model-role target=google/gemini-3.1-pro-preview \
   --model-role judge=anthropic/claude-sonnet-4-5 \
   -T seed_name=as-hidden-soar \
-  -T target_name="Gemini CLI" \
+  -T scaffold="Gemini CLI" \
   --log-dir logs/<seed>-shakedown
 
 # N=3 replication

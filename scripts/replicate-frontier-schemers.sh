@@ -16,7 +16,7 @@ for i in 1 2; do
     --model-role target=openai/gpt-5 \
     --model-role judge=anthropic/claude-sonnet-4-5 \
     -T seed_name=as-hidden-soar \
-    -T target_name="Codex CLI" \
+    -T scaffold="Codex CLI" \
     --log-dir "$RUN_DIR" \
     --no-score-display \
     2>&1 | tee "$RUN_DIR/console.log"
@@ -32,7 +32,7 @@ for i in 1 2; do
     --model-role target=google/gemini-3-flash-preview \
     --model-role judge=anthropic/claude-sonnet-4-5 \
     -T seed_name=as-hidden-soar \
-    -T target_name="Gemini CLI" \
+    -T scaffold="Gemini CLI" \
     --log-dir "$RUN_DIR" \
     --no-score-display \
     2>&1 | tee "$RUN_DIR/console.log"

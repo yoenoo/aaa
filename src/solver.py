@@ -202,13 +202,13 @@ def petri_solver(seed: Seed, scaffold: str, expose_reasoning: bool = False):
                 "event": "scaffold_start_error",
                 "error": err_line,
                 "traceback": tb,
-                "target_name": target_name,
+                "scaffold": scaffold,
             })
             # Append a visible error to auditor_msgs so the eval log captures
             # the failure cleanly rather than reporting an empty audit.
             auditor_msgs.append(ChatMessageUser(
                 content=(
-                    f"[scaffold failed to start: {target_name}]\n\n{err_line}\n\n"
+                    f"[scaffold failed to start: {scaffold}]\n\n{err_line}\n\n"
                     "Audit cannot proceed. See traceback above. Common fixes:\n"
                     "  - For Codex CLI: pin AAA_CODEX_CLI_VERSION or check OPENAI_API_KEY.\n"
                     "  - For Gemini CLI: pin AAA_GEMINI_CLI_VERSION or try a different model.\n"

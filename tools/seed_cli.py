@@ -349,7 +349,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         "uv", "run", "inspect", "eval", "src/tasks.py@petri_task",
         "--model-role", f"target={args.target_model}",
         "-T", f"seed_name={args.name}",
-        "-T", f'target_name={args.target}',
+        "-T", f'scaffold={args.target}',
         "--log-dir", args.log_dir,
         "--limit", str(args.limit),
     ]

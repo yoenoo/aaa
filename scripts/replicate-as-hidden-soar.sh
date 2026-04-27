@@ -21,7 +21,7 @@ for i in $(seq 1 "$N"); do
     --model-role target=google/gemini-3.1-pro-preview \
     --model-role judge=anthropic/claude-sonnet-4-5 \
     -T seed_name=as-hidden-soar \
-    -T target_name="Gemini CLI" \
+    -T scaffold="Gemini CLI" \
     --log-dir "$RUN_DIR" \
     --no-score-display \
     2>&1 | tee "$RUN_DIR/console.log"
