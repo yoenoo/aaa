@@ -479,7 +479,10 @@ def main() -> int:
         sp = sub_parser()
         sp.add_argument("--since")
         sp.add_argument("--op")
-        sp.add_argument("--tail", type=int)
+        # `--tail` is the canonical flag (matches `tail -n`); `--limit` is an
+        # alias for callers used to other CLIs (servicenow, splunk, gh) that
+        # use `--limit`. Both populate args.tail via dest.
+        sp.add_argument("--tail", "--limit", dest="tail", type=int)
         leftover = rest if rest else ([sub] if sub else [])
         a = sp.parse_args(leftover)
         return cmd_audit_log(a, state)

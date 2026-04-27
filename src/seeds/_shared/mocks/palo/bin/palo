@@ -142,6 +142,8 @@ def cmd_dns_security_logs(args, state) -> int:
         logs = [r for r in logs if r.get("_time", "") <= args.to]
     if args.src:
         logs = [r for r in logs if r.get("src", "") == args.src]
+    if getattr(args, "src_user", None):
+        logs = [r for r in logs if r.get("src_user", "") == args.src_user]
     if args.query:
         needle = args.query.lower()
         logs = [r for r in logs if needle in (r.get("query", "") or "").lower()]
@@ -293,6 +295,53 @@ def main() -> int:
     state = _load_state()
     cmd, sub, rest = args.command, args.subcommand, args.rest
 
+    # Targets familiar with Palo's log-format key names keep typing
+    # `src_user=foo` (a real Palo log column). Translate common
+    # Palo-flavoured filter names into their flag equivalents. `src_user`
+    # and `user` route to the `--src-user` flag (filters by the user-login
+    # field); `src` routes to `--src` (filters by source IP). `domain`
+    # routes to `--query` (substring match on the queried domain).
+    _PALO_ALIAS = {
+        "src": "--src",
+        "src_user": "--src-user", "user": "--src-user",
+        "from": "--from", "to": "--to",
+        "query": "--query", "limit": "--limit",
+        "domain": "--query",
+    }
+
+    def _expand_palo_args(tokens: list[str]) -> list[str]:
+        out: list[str] = []
+        i = 0
+        while i < len(tokens):
+            t = tokens[i]
+            # `key=value` form
+            if "=" in t and not t.startswith("--"):
+                key, _, val = t.partition("=")
+                flag = _PALO_ALIAS.get(key.strip().lower())
+                if flag is not None:
+                    out.extend([flag, val]); i += 1; continue
+            # `--src_user value` (palo log column name as flag)
+            if t.startswith("--"):
+                stripped = t[2:].lower()
+                flag = _PALO_ALIAS.get(stripped)
+                if flag is not None and flag != t:
+                    out.append(flag)
+                    if i + 1 < len(tokens):
+                        out.append(tokens[i + 1])
+                        i += 2
+                    else:
+                        i += 1
+                    continue
+            out.append(t)
+            i += 1
+        return out
+
+    rest = _expand_palo_args(rest)
+    if sub and "=" in sub and not sub.startswith("--"):
+        expanded = _expand_palo_args([sub])
+        sub = expanded[0] if expanded else sub
+        rest = (expanded[1:] if len(expanded) > 1 else []) + rest
+
     def sub_parser(**kwargs):
         sp = argparse.ArgumentParser(prog=f"palo {cmd} {sub or ''}".strip(), **kwargs)
         sp.add_argument("--json", action="store_true")
@@ -313,7 +362,11 @@ def main() -> int:
             sp = sub_parser()
             sp.add_argument("--from", dest="from_")
             sp.add_argument("--to")
-            sp.add_argument("--src")
+            sp.add_argument("--src")  # source IP
+            # `--src-user` / `--src_user` filter by the user-login field;
+            # both spellings accepted via dest collapsing. Real Palo logs
+            # have a `src_user` column so callers reach for that name.
+            sp.add_argument("--src-user", "--src_user", dest="src_user")
             sp.add_argument("--query")
             sp.add_argument("--limit", type=int, default=100)
             a = sp.parse_args(rest)

@@ -65,9 +65,28 @@ def _patch_codex_version_resolution() -> None:
 _patch_codex_version_resolution()
 
 
+# Codex CLI defaults to sandbox_mode="workspace-write", which mounts
+# everything outside the cwd (here `/workspace`) as read-only. That breaks
+# every mock CLI under `/srv` because mocks write state.json on each
+# mutation (deploy, post, ticket-create, etc.). Symptom in transcripts:
+#   OSError: [Errno 30] Read-only file system: '/srv/splunk/state.json'
+# Workspace-write is a Codex feature aimed at human-supervised coding;
+# it doesn't fit our auditing topology where the agent legitimately
+# mutates `/srv/<service>/state.json`. Switch to full-access — the
+# Docker sandbox itself contains the blast radius and the target has
+# no internet access in our setup.
+_CODEX_CONFIG_OVERRIDES = {
+    "sandbox_mode": "danger-full-access",
+    "approval_policy": "never",
+}
+
+
 _SCAFFOLD_FACTORIES = {
     "Claude Code": interactive_claude_code,
-    "Codex CLI": interactive_codex_cli,
+    "Codex CLI": lambda **kw: interactive_codex_cli(
+        config_overrides={**_CODEX_CONFIG_OVERRIDES, **(kw.pop("config_overrides", None) or {})},
+        **kw,
+    ),
     # AAA_GEMINI_CLI_VERSION lets us pin against a specific release when the
     # host's npm policy (min-release-age / before) blocks "auto" from
     # resolving the newest published version. Without this, the default

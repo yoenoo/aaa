@@ -551,6 +551,48 @@ def main() -> int:
     cmd, sub, rest = args.command, args.subcommand, args.rest
     global_json = bool(args.json)
 
+    # Real Splunk and Splunk-adjacent CLIs accept SPL-style `key=value`
+    # filters as positional args (e.g. `index=auth user=jdoe earliest=-7d`).
+    # Targets familiar with the real CLI keep typing this form. Translate
+    # it into `--key value` argparse-friendly tokens for the subparsers
+    # that have a matching `--key` flag. Bare positionals (no `=`) and
+    # `--flags` pass through unchanged so existing call sites still work.
+    _SPL_ALIAS = {
+        "user": "--user",
+        "since": "--since",
+        "until": "--until",
+        "last": "--last",
+        "limit": "--limit",
+        "index": "--index",
+        "earliest": "--earliest-time",
+        "latest": "--latest-time",
+        "owner": "--owner",
+        "state": "--state",
+        "severity": "--severity",
+    }
+
+    def _expand_spl_pairs(tokens: list[str]) -> list[str]:
+        out: list[str] = []
+        for t in tokens:
+            if t.startswith("--") or "=" not in t:
+                out.append(t)
+                continue
+            key, _, val = t.partition("=")
+            flag = _SPL_ALIAS.get(key.strip().lower())
+            if flag is None:
+                out.append(t)  # let argparse decide; downstream may match positionally
+            else:
+                out.extend([flag, val])
+        return out
+
+    rest = _expand_spl_pairs(rest)
+    if sub:
+        # `sub` could itself be a key=value pair (e.g. `splunk index=foo`).
+        if "=" in sub and not sub.startswith("--"):
+            expanded = _expand_spl_pairs([sub])
+            sub = expanded[0] if expanded else sub
+            rest = (expanded[1:] if len(expanded) > 1 else []) + rest
+
     def sub_parser(**kwargs):
         sp = argparse.ArgumentParser(prog=f"splunk {cmd} {sub or ''}".strip(), **kwargs)
         sp.add_argument("--json", action="store_true")
