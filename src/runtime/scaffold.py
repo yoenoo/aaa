@@ -148,12 +148,32 @@ class ScaffoldRuntime:
         self._activity: list[TargetTurn] = []
         self._agent = None
         self._ready = anyio.Event()
+        # Per-scaffold default send timeout. Gemini CLI hangs frequently in
+        # mid-audit (5-7 hangs per ~30-turn audit observed across 3 runs);
+        # at 300s each that's ~25-35 min of wasted budget per audit. A
+        # legitimate Gemini turn rarely exceeds 90s even with a dozen tool
+        # calls, so 90s catches hangs ~3.3x faster without rejecting real
+        # work. Codex / Claude Code show no such hang pattern; they keep
+        # the 300s default. Override hierarchy:
+        #   AAA_SEND_TIMEOUT_SECS    (global, applies to all scaffolds)
+        #   AAA_<SCAFFOLD>_SEND_TIMEOUT_SECS  (per-scaffold)
+        #   per-scaffold default below
+        _per_scaffold_default = {
+            "Gemini CLI": 90.0,
+            "Codex CLI": _DEFAULT_SEND_TIMEOUT_SECS,
+            "Claude Code": _DEFAULT_SEND_TIMEOUT_SECS,
+        }.get(scaffold_name, _DEFAULT_SEND_TIMEOUT_SECS)
+        _scaffold_env_key = (
+            "AAA_" + scaffold_name.upper().replace(" ", "_") + "_SEND_TIMEOUT_SECS"
+        )
         try:
-            self._send_timeout = float(os.environ.get(
-                "AAA_SEND_TIMEOUT_SECS", _DEFAULT_SEND_TIMEOUT_SECS,
-            ))
+            self._send_timeout = float(
+                os.environ.get("AAA_SEND_TIMEOUT_SECS")
+                or os.environ.get(_scaffold_env_key)
+                or _per_scaffold_default
+            )
         except ValueError:
-            self._send_timeout = _DEFAULT_SEND_TIMEOUT_SECS
+            self._send_timeout = _per_scaffold_default
         try:
             self._start_timeout = float(os.environ.get(
                 "AAA_SCAFFOLD_START_TIMEOUT_SECS", _DEFAULT_START_TIMEOUT_SECS,

@@ -456,10 +456,16 @@ def main() -> int:
             return cmd_channel_list(a, state)
         if sub == "history":
             sp = sub_parser()
-            sp.add_argument("channel")
+            # `--channel` is the alternative spelling of the positional;
+            # real Slack CLIs accept both. nargs="?" so both `slack channel
+            # history soc-team` and `slack channel history --channel soc-team`
+            # work.
+            sp.add_argument("channel", nargs="?")
+            sp.add_argument("--channel", dest="channel_flag")
             sp.add_argument("--limit", type=int, default=50)
             sp.add_argument("--since")
             a = sp.parse_args(rest)
+            a.channel = a.channel or a.channel_flag
             return cmd_channel_history(a, state)
 
     if cmd == "dm":
@@ -469,29 +475,39 @@ def main() -> int:
             return cmd_dm_list(a, state)
         if sub == "history":
             sp = sub_parser()
-            sp.add_argument("user")
+            sp.add_argument("user", nargs="?")
+            sp.add_argument("--user", dest="user_flag")
             sp.add_argument("--limit", type=int, default=50)
             sp.add_argument("--since")
             a = sp.parse_args(rest)
+            a.user = a.user or a.user_flag
             return cmd_dm_history(a, state)
 
     if cmd == "post":
         sp = sub_parser()
         sp.add_argument("--channel")
         sp.add_argument("--dm")
-        sp.add_argument("--thread")
+        sp.add_argument("--thread", "--ts", dest="thread")
+        # `text` may be passed positionally (Slack CLI idiom) or as
+        # `--message`/`--text`/`--body` (other CLIs' idioms).
         sp.add_argument("text", nargs="?")
+        sp.add_argument("--message", "--text", "--body", dest="text_flag")
         # `post` has no subcommand; argparse swallowed the first positional as `sub`.
-        # Re-assemble positional args: [sub, *rest] where sub may itself be `--channel=…`
-        # or a flag. argparse handles both.
         leftover = ([sub] if sub else []) + rest
         a = sp.parse_args(leftover)
+        a.text = a.text or a.text_flag
         return cmd_post(a, state)
 
     if cmd == "thread" and sub == "show":
         sp = sub_parser()
-        sp.add_argument("ts")
+        sp.add_argument("ts", nargs="?")
+        # Real Slack CLIs accept `--ts` (timestamp) and `--channel` for
+        # disambiguation. `--channel` is informational here (mock keys
+        # threads by ts globally) but accepted to avoid arg errors.
+        sp.add_argument("--ts", dest="ts_flag")
+        sp.add_argument("--channel")
         a = sp.parse_args(rest)
+        a.ts = a.ts or a.ts_flag
         return cmd_thread_show(a, state)
 
     if cmd == "search":

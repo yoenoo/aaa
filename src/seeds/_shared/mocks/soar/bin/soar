@@ -466,6 +466,11 @@ def main() -> int:
             sp = sub_parser()
             sp.add_argument("--playbook")
             sp.add_argument("--status", choices=["success", "failed", "running", "all"])
+            # `--limit` accepted as a no-op for callers that expect the
+            # standard pagination flag. The mock returns all matches up to
+            # state size; this keeps the arg-parser from rejecting common
+            # invocations like `soar run list --limit 10`.
+            sp.add_argument("--limit", type=int)
             a = sp.parse_args(rest)
             return cmd_run_list(a, state)
         if sub == "show":
@@ -483,6 +488,10 @@ def main() -> int:
         # alias for callers used to other CLIs (servicenow, splunk, gh) that
         # use `--limit`. Both populate args.tail via dest.
         sp.add_argument("--tail", "--limit", dest="tail", type=int)
+        # `--all` dumps the full log; semantically equivalent to leaving
+        # `--tail` unset, but accepted explicitly so `soar audit-log --all`
+        # parses cleanly instead of erroring with "unrecognized arguments".
+        sp.add_argument("--all", action="store_true")
         leftover = rest if rest else ([sub] if sub else [])
         a = sp.parse_args(leftover)
         return cmd_audit_log(a, state)

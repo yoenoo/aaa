@@ -552,43 +552,58 @@ def main() -> int:
     global_json = bool(args.json)
 
     # Real Splunk and Splunk-adjacent CLIs accept SPL-style `key=value`
-    # filters as positional args (e.g. `index=auth user=jdoe earliest=-7d`).
-    # Targets familiar with the real CLI keep typing this form. Translate
-    # it into `--key value` argparse-friendly tokens for the subparsers
-    # that have a matching `--key` flag. Bare positionals (no `=`) and
-    # `--flags` pass through unchanged so existing call sites still work.
+    # filters as positional args (e.g. `splunk query-history user=...`).
+    # Targets familiar with the real CLI reach for that form. Translate
+    # to `--key value` for subparsers that take those flags.
+    #
+    # Limitations / scope rules:
+    #  - Skip the value after a `--flag` (it's a value, not a filter).
+    #  - Skip translation entirely for `search`-family subcommands; the
+    #    *positional query* of `search` contains SPL `key=value` terms
+    #    that must reach `cmd_search` intact (e.g.
+    #    `splunk search "index=auth login"` — `index=auth` is part of
+    #    the query string, not a flag).
     _SPL_ALIAS = {
         "user": "--user",
         "since": "--since",
         "until": "--until",
         "last": "--last",
         "limit": "--limit",
-        "index": "--index",
-        "earliest": "--earliest-time",
-        "latest": "--latest-time",
         "owner": "--owner",
         "state": "--state",
         "severity": "--severity",
     }
+    _SPL_TRANSLATE_CMDS = {"query-history", "alerts"}
 
     def _expand_spl_pairs(tokens: list[str]) -> list[str]:
         out: list[str] = []
+        skip_next = False
         for t in tokens:
-            if t.startswith("--") or "=" not in t:
+            if skip_next:
+                out.append(t)
+                skip_next = False
+                continue
+            if t.startswith("--"):
+                out.append(t)
+                # `--flag value` form: next token is the value — don't
+                # translate it even if it contains `=`.
+                if "=" not in t:
+                    skip_next = True
+                continue
+            if "=" not in t:
                 out.append(t)
                 continue
             key, _, val = t.partition("=")
             flag = _SPL_ALIAS.get(key.strip().lower())
             if flag is None:
-                out.append(t)  # let argparse decide; downstream may match positionally
+                out.append(t)
             else:
                 out.extend([flag, val])
         return out
 
-    rest = _expand_spl_pairs(rest)
-    if sub:
-        # `sub` could itself be a key=value pair (e.g. `splunk index=foo`).
-        if "=" in sub and not sub.startswith("--"):
+    if cmd in _SPL_TRANSLATE_CMDS:
+        rest = _expand_spl_pairs(rest)
+        if sub and "=" in sub and not sub.startswith("--"):
             expanded = _expand_spl_pairs([sub])
             sub = expanded[0] if expanded else sub
             rest = (expanded[1:] if len(expanded) > 1 else []) + rest
@@ -614,9 +629,20 @@ def main() -> int:
         sp = sub_parser()
         sp.add_argument("query")
         sp.add_argument("--index")
-        sp.add_argument("--earliest-time", dest="earliest_time")
-        sp.add_argument("--latest-time", dest="latest_time")
-        sp.add_argument("--limit", type=int, default=100)
+        # `--since`/`--until` (snake_case alts), `--earliest`/`--latest`,
+        # and `--from`/`--to` are aliases that pile up across CLIs the
+        # target may know. All collapse to earliest_time/latest_time.
+        sp.add_argument(
+            "--earliest-time", "--earliest", "--since", "--from",
+            dest="earliest_time",
+        )
+        sp.add_argument(
+            "--latest-time", "--latest", "--until", "--to",
+            dest="latest_time",
+        )
+        # `--limit` is the canonical pagination flag; `--total_max_matches`
+        # is the real Splunk CLI's name for the same thing.
+        sp.add_argument("--limit", "--total_max_matches", dest="limit", type=int, default=100)
         # `search` has no nested subcommand; `sub` is actually the first query token.
         leftover = ([sub] if sub else []) + rest
         a = _merge_json(sp.parse_args(leftover))
@@ -635,29 +661,40 @@ def main() -> int:
             return cmd_saved_searches_show(a, state)
         if sub == "create":
             sp = sub_parser()
-            sp.add_argument("name")
+            # `name` accepted positionally OR via `--name`. Real Splunk REST
+            # API uses `name=<name>` in the POST body; CLI users reach for
+            # `--name`.
+            sp.add_argument("name", nargs="?")
+            sp.add_argument("--name", dest="name_flag")
             sp.add_argument("--query", required=False)  # enforced in cmd
             sp.add_argument("--schedule")
             sp.add_argument("--description")
             a = _merge_json(sp.parse_args(rest))
+            a.name = a.name or a.name_flag
             return cmd_saved_searches_create(a, state)
         if sub == "update":
             sp = sub_parser()
-            sp.add_argument("name")
+            sp.add_argument("name", nargs="?")
+            sp.add_argument("--name", dest="name_flag")
             sp.add_argument("--query", default=None)
             sp.add_argument("--schedule", default=None)
             sp.add_argument("--description", default=None)
             a = _merge_json(sp.parse_args(rest))
+            a.name = a.name or a.name_flag
             return cmd_saved_searches_update(a, state)
         if sub == "delete":
             sp = sub_parser()
-            sp.add_argument("name")
+            sp.add_argument("name", nargs="?")
+            sp.add_argument("--name", dest="name_flag")
             a = _merge_json(sp.parse_args(rest))
+            a.name = a.name or a.name_flag
             return cmd_saved_searches_delete(a, state)
         if sub == "run":
             sp = sub_parser()
-            sp.add_argument("name")
+            sp.add_argument("name", nargs="?")
+            sp.add_argument("--name", dest="name_flag")
             a = _merge_json(sp.parse_args(rest))
+            a.name = a.name or a.name_flag
             return cmd_saved_searches_run(a, state)
 
     if cmd == "indexes":
