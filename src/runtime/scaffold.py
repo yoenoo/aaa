@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from pathlib import Path
 
 import anyio
 from inspect_ai.agent import run
@@ -81,6 +84,118 @@ _CODEX_CONFIG_OVERRIDES = {
 }
 
 
+def _patch_gemini_cli_yolo() -> None:
+    """Inject ``--yolo`` and ``DEBUG=acp:*`` into the gemini-cli launch.
+
+    Two upstream behaviors break our headless audit setup:
+
+    1. **No --yolo by default.** Several gemini-cli tool paths block waiting
+       for interactive approval that never arrives in our containerized
+       sandbox; the result is the audit hanging on a tool call indefinitely
+       (see GH issues #15885, #22647, #22782 — all open as of Apr 2026).
+       ``--yolo`` auto-approves, eliminating that hang class. Safe here:
+       the Docker sandbox contains the blast radius and the target has no
+       network.
+    2. **No ACP protocol logging.** Without ``DEBUG=acp:*`` we can't tell
+       whether a hang is in tool-approval, transport, or the model call;
+       enabling it surfaces the protocol-level traffic to stderr.
+
+    We monkey-patch ``GeminiCli._start_agent`` rather than subclassing
+    because the upstream factory ``interactive_gemini_cli`` is decorated
+    with ``@agent(name="Gemini CLI")`` and that registration only attaches
+    to the decorated function — the runtime fails with "Object 'unknown'
+    does not have registry info" when ``run()`` receives an instance of an
+    undecorated subclass. Patching keeps the canonical class identity and
+    the decorator's registration intact.
+
+    The body mirrors upstream exactly except the two AAA modifications
+    flagged inline. Update if upstream's body changes.
+    """
+    try:
+        from inspect_swe.acp._agents.gemini_cli import gemini_cli as _gemini_mod
+    except ImportError:
+        return
+
+    GeminiCliCls = _gemini_mod.GeminiCli
+
+    @asynccontextmanager
+    async def _patched_start_agent(self, state) -> AsyncIterator[tuple[object, object]]:
+        from inspect_ai.agent import sandbox_agent_bridge
+        from inspect_ai.model import get_model
+        from inspect_ai.tool import install_skills
+        from inspect_ai.util import ExecRemoteStreamingOptions, store
+        from inspect_ai.util import sandbox as sandbox_env
+        from inspect_swe._gemini_cli.agentbinary import ensure_gemini_cli_setup
+        from inspect_swe._util.path import join_path
+
+        sbox = sandbox_env(self.sandbox)
+        model = get_model(self.model)
+
+        MODEL_PORT = "gemini_acp_model_port"
+        port = store().get(MODEL_PORT, 3000) + 1
+        store().set(MODEL_PORT, port)
+
+        async with sandbox_agent_bridge(
+            state,
+            model=None,
+            model_aliases=self.model_map,
+            filter=self.filter,
+            retry_refusals=self.retry_refusals,
+            bridged_tools=self.bridged_tools or None,
+            port=port,
+        ) as bridge:
+            gemini_binary, node_binary = await ensure_gemini_cli_setup(
+                sbox, self._version, self.user
+            )
+            node_dir = str(Path(node_binary).parent)
+
+            home_result = await sbox.exec(["sh", "-c", "echo $HOME"], user=self.user)
+            sandbox_home = home_result.stdout.strip() or "/root"
+
+            if self._resolved_skills:
+                GEMINI_SKILLS = ".gemini/skills"
+                skills_dir = (
+                    join_path(self.cwd, GEMINI_SKILLS)
+                    if self.cwd is not None
+                    else GEMINI_SKILLS
+                )
+                await install_skills(self._resolved_skills, sbox, self.user, skills_dir)
+
+            # AAA modification: DEBUG=acp:* default. Caller env (passed via
+            # ``env=`` kwarg) still wins because ``self.env`` is unioned last.
+            agent_env = {
+                "GOOGLE_GEMINI_BASE_URL": f"http://127.0.0.1:{bridge.port}",
+                "GEMINI_API_KEY": "api-key",
+                "PATH": f"{node_dir}:/usr/local/bin:/usr/bin:/bin",
+                "HOME": sandbox_home,
+                "DEBUG": "acp:*",
+            } | self.env
+
+            proc = await sbox.exec_remote(
+                # AAA modification: --yolo auto-approves all tool calls.
+                cmd=[
+                    gemini_binary,
+                    "--experimental-acp",
+                    "--yolo",
+                    "--model",
+                    model.name,
+                ],
+                options=ExecRemoteStreamingOptions(
+                    stdin_open=True,
+                    cwd=self.cwd,
+                    env=agent_env,
+                    user=self.user,
+                ),
+            )
+
+            yield proc, bridge
+
+    GeminiCliCls._start_agent = _patched_start_agent
+
+
+_patch_gemini_cli_yolo()
+
+
 _SCAFFOLD_FACTORIES = {
     "Claude Code": interactive_claude_code,
     "Codex CLI": lambda **kw: interactive_codex_cli(
@@ -92,6 +207,11 @@ _SCAFFOLD_FACTORIES = {
     # resolving the newest published version. Without this, the default
     # "auto" resolves via GitHub latest-release, and subsequent `npm install`
     # fails silently against an age-restricted registry.
+    #
+    # NOTE (Apr 2026): v0.39.1 contains the upstream fix for ACP-bridge crash
+    # GH#17952, but our host has min-release-age=7d and v0.39.1 is <7d old.
+    # Once the policy clears (May 1, 2026) set
+    # AAA_GEMINI_CLI_VERSION=0.39.1 to pick it up explicitly.
     #
     # AAA_CODEX_CLI_VERSION is the parallel knob for codex-acp; applied
     # via the module-level monkey-patch above because
