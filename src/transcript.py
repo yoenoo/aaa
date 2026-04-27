@@ -392,8 +392,9 @@ def convert_log(log: EvalLog, log_id: str = "") -> dict[str, Any]:
     for role_name, spec in (log.eval.model_roles or {}).items():
         if role_name == "target":
             target_model = str(spec.model) if hasattr(spec, "model") else str(spec)
-    scaffold_name = log.eval.task_args.get("target_name", "") if log.eval.task_args else ""
-    seed_name = log.eval.task_args.get("seed_name", "") if log.eval.task_args else ""
+    task_args = log.eval.task_args or {}
+    scaffold_name = task_args.get("scaffold") or task_args.get("target_name", "")
+    seed_name = task_args.get("seed_name", "")
 
     tool_name_by_call_id: dict[str, str] = {}
     for msg in sample.messages:

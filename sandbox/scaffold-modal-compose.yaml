@@ -1,0 +1,36 @@
+# Modal sandbox configuration for the scaffold runtime.
+# Used when PETRI_SANDBOX=modal — runs the scaffold container on Modal's
+# cloud infrastructure instead of local Docker.
+#
+# Differences from scaffold-compose.yaml:
+#   - Modal sandboxes run on gVisor (single-service only — already true here)
+#   - cpus/mem_limit are ignored on Modal; resources are set on the Modal
+#     sandbox at runtime by inspect-sandboxes
+#   - networks are not configurable via compose; outbound is allowed by default
+#   - volumes / network_file_systems / proxy are not supported
+#
+# Prerequisites:
+#   pip install inspect-sandboxes
+#   python3 -m modal setup
+#   modal secret create petri-api-keys ANTHROPIC_API_KEY=... OPENAI_API_KEY=... GEMINI_API_KEY=...
+
+services:
+  default:
+    build:
+      context: .
+      dockerfile: scaffold.Dockerfile
+    init: true
+    command: tail -f /dev/null
+    working_dir: /workspace
+
+    environment:
+      - TERM=xterm-256color
+
+    x-modal:
+      # 4 hours — long audits with deep branching can run >1h. Modal bills
+      # per-second so a generous ceiling only matters if something hangs.
+      timeout: 14400
+      # Terminate sandbox after 5 min of no exec activity.
+      idle_timeout: 300
+      secrets:
+        - petri-api-keys

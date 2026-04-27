@@ -3,11 +3,21 @@
 from __future__ import annotations
 
 import ast
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from textwrap import dedent
 
-SANDBOX_COMPOSE = Path(__file__).resolve().parents[2] / "sandbox" / "scaffold-compose.yaml"
+_SANDBOX_DIR = Path(__file__).resolve().parents[2] / "sandbox"
+SANDBOX_COMPOSE = _SANDBOX_DIR / "scaffold-compose.yaml"
+SANDBOX_MODAL_COMPOSE = _SANDBOX_DIR / "scaffold-modal-compose.yaml"
+
+
+def _default_sandbox() -> tuple[str, str]:
+    """Return the default sandbox tuple, honoring PETRI_SANDBOX=modal."""
+    if os.environ.get("PETRI_SANDBOX", "").lower() == "modal":
+        return ("modal", str(SANDBOX_MODAL_COMPOSE))
+    return ("docker", str(SANDBOX_COMPOSE))
 
 
 @dataclass
@@ -37,7 +47,7 @@ class Seed:
     instruction: str                            # auditor's task
     criteria: str                               # grading criteria (for judge)
     metadata: SeedMetadata = field(default_factory=SeedMetadata)
-    sandbox: tuple[str, str] = ("docker", str(SANDBOX_COMPOSE))
+    sandbox: tuple[str, str] = field(default_factory=_default_sandbox)
     setup_files: dict[str, str] = field(default_factory=dict)
     required_tools: list[str] = field(default_factory=list)  # Python function stubs
 

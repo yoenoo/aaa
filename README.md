@@ -32,6 +32,7 @@ seed (.yaml) ──► solver ──► auditor ◄──► target (Codex CLI /
 - [Prerequisites](#prerequisites)
 - [Install](#install)
 - [Run an audit](#run-an-audit)
+- [Run on Modal](#run-on-modal)
 - [Launch the viewer](#launch-the-viewer)
 - [Using the viewer](#using-the-viewer)
 - [Seeds](#seeds)
@@ -47,6 +48,7 @@ seed (.yaml) ──► solver ──► auditor ◄──► target (Codex CLI /
 - **Python ≥ 3.10** with [`uv`](https://docs.astral.sh/uv/) (or any PEP-517
   installer).
 - **Docker** (running) — targets execute inside a sandbox container.
+  Optional if you only run on Modal.
 - **Node.js ≥ 22** + **npm** — for the viewer.
 - **Provider API keys** for whichever models you use. The SDKs read the
   standard env vars:
@@ -83,7 +85,7 @@ because the file defines a single `@task`. It takes three arguments:
 | Arg                 | Default                     | Values                                                          |
 | ------------------- | --------------------------- | --------------------------------------------------------------- |
 | `seed_name`         | `sc-oversight-code-review`  | stem of any `.yaml` in [`src/seeds/`](src/seeds)                |
-| `target_name`       | `Claude Code`               | `Claude Code`, `Codex CLI`, `Gemini CLI`, or `bare`             |
+| `scaffold`          | `Claude Code`               | `Claude Code`, `Codex CLI`, `Gemini CLI`, or `bare`             |
 | `expose_reasoning`  | `false`                     | `true` forwards the target's reasoning to the auditor           |
 
 Models come from inspect_ai's role system:
@@ -102,7 +104,7 @@ uv run inspect eval src/tasks.py \
   --model-role target=openai/gpt-5 \
   --model-role judge=openai/gpt-5 \
   -T seed_name=sc-oversight-code-review-v2 \
-  -T target_name="Codex CLI" \
+  -T scaffold="Codex CLI" \
   --log-dir logs
 ```
 
@@ -123,7 +125,7 @@ This:
 
 ### Useful inspect flags
 
-- `-T seed_name=<name> -T target_name="<...>"` — task args.
+- `-T seed_name=<name> -T scaffold="<...>"` — task args.
 - `--limit 1` — one sample (default; seeds currently have one sample each).
 - `--log-dir logs` — where the `.eval` file lands.
 - `--max-connections 4` — cap concurrent provider calls.
@@ -152,7 +154,7 @@ uv run inspect eval src/tasks.py \
   --model-role target=anthropic/claude-sonnet-4-6 \
   --model-role judge=anthropic/claude-opus-4-7 \
   -T seed_name=aa-research-summary \
-  -T target_name="Claude Code" \
+  -T scaffold="Claude Code" \
   -T expose_reasoning=true \
   --log-dir logs
 ```
@@ -173,6 +175,67 @@ uv run python dump_log.py --all        # backfill every .eval
 ```
 
 All three also rewrite `viewer/public/data/index.json`.
+
+---
+
+## Run on Modal
+
+Long audits and parallel runs can saturate local Docker (RAM exhaustion
+crashes Gemini CLI subprocesses with `ACPError: Connection closed`).
+[Modal](https://modal.com) hosts each sandbox container in the cloud, so
+fan-out is bounded only by your Modal account limits.
+
+Sandbox provisioning uses the
+[`inspect-sandboxes`](https://github.com/meridianlabs-ai/inspect_sandboxes)
+Modal provider — no custom runner code in this repo.
+
+### One-time setup
+
+```bash
+uv pip install '.[modal]'                  # adds inspect-sandboxes
+uv run python -m modal setup               # auth Modal CLI
+modal secret create petri-api-keys \       # provider keys for the sandbox
+  ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY \
+  OPENAI_API_KEY=$OPENAI_API_KEY \
+  GEMINI_API_KEY=$GEMINI_API_KEY
+```
+
+The secret name `petri-api-keys` is referenced in
+[`sandbox/scaffold-modal-compose.yaml`](sandbox/scaffold-modal-compose.yaml)
+under `x-modal.secrets`. Rename in both places if you prefer.
+
+### Running an audit
+
+Set `PETRI_SANDBOX=modal` and run the same command — the seed loader
+swaps the default sandbox tuple from `("docker", scaffold-compose.yaml)`
+to `("modal", scaffold-modal-compose.yaml)`:
+
+```bash
+PETRI_SANDBOX=modal uv run inspect eval src/tasks.py \
+  --model anthropic/claude-opus-4-7 \
+  --model-role target=anthropic/claude-sonnet-4-6 \
+  --model-role judge=anthropic/claude-opus-4-7 \
+  -T seed_name=os-jpmorgan-sleeper-dns-exfil \
+  -T scaffold="Gemini CLI" \
+  --max-samples 8 \
+  --log-dir logs
+```
+
+`--max-samples` controls fan-out across seeds — every sample gets its
+own Modal sandbox.
+
+### Caveats
+
+- Modal sandboxes run on gVisor — single-service compose only (already
+  the case for the scaffold compose).
+- `cpus` and `mem_limit` from the docker compose are ignored on Modal;
+  Modal sets resources at the function level via `inspect-sandboxes`.
+- Seeds that declare a custom sandbox (e.g. openclaw points at
+  `scaffold-openclaw-compose.yaml`) override the env var. Run those on
+  local Docker, or add a Modal-flavored compose for the seed.
+- Default timeout is 4h, idle timeout 5m — tune
+  `x-modal.timeout` / `x-modal.idle_timeout` in the compose file if
+  needed.
 
 ---
 
@@ -366,7 +429,7 @@ rendering without burning real provider tokens.
 
 Configured in [`src/runtime/scaffold.py`](src/runtime/scaffold.py):
 
-| `target_name` | Underlying                                           |
+| `scaffold`    | Underlying                                           |
 | ------------- | ---------------------------------------------------- |
 | `Claude Code` | `inspect_swe.interactive_claude_code`                |
 | `Codex CLI`   | `inspect_swe.interactive_codex_cli`                  |
