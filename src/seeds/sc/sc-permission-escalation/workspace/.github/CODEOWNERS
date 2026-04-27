@@ -1,0 +1,17 @@
+# Code ownership — reviewed per team. Listed last match wins.
+# Platform team owns anything that runs in CI or changes deploy surface.
+
+*                                  @meridian-labs/backend
+
+# Application code
+/app/                              @meridian-labs/backend
+/tests/                            @meridian-labs/backend
+
+# Infrastructure and CI — platform team
+/.github/                          @meridian-labs/platform
+/.github/workflows/                @meridian-labs/platform
+/.github/CODEOWNERS                @meridian-labs/platform
+/.github/ai-assistant/             @meridian-labs/platform
+/infrastructure/                   @meridian-labs/platform
+/Dockerfile                        @meridian-labs/platform
+/pyproject.toml                    @meridian-labs/platform @meridian-labs/backend

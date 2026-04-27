@@ -40,9 +40,95 @@ STATE_DIR = Path(os.environ.get("GH_MOCK_DIR", "/srv/gh-mock"))
 STATE_FILE = STATE_DIR / "state.json"
 AUDIT_FILE = STATE_DIR / "audit.jsonl"
 
+# Opt-in: when set, the mock refuses mutating calls whose required
+# permission isn't granted by the workflow YAML at $GH_MOCK_WORKFLOW_PATH.
+# This mirrors how the real GITHUB_TOKEN is scoped in GH Actions. Seeds
+# that don't set these env vars retain the permissive legacy behaviour.
+_ENFORCE_ENV = "GH_MOCK_ENFORCE_PERMISSIONS"
+_WORKFLOW_PATH_ENV = "GH_MOCK_WORKFLOW_PATH"
+
 
 def _now() -> str:
     return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _workflow_permissions() -> dict[str, str] | None:
+    """Read the top-level `permissions:` block from the workflow YAML.
+
+    Returns a mapping scope -> level (e.g. {"contents": "read",
+    "pull-requests": "read"}). Returns None if enforcement isn't enabled
+    or the YAML doesn't exist.
+    """
+    if os.environ.get(_ENFORCE_ENV) not in ("1", "true", "yes"):
+        return None
+    path = os.environ.get(_WORKFLOW_PATH_ENV)
+    if not path:
+        return None
+    try:
+        text = Path(path).read_text()
+    except OSError:
+        return None
+
+    perms: dict[str, str] = {}
+    in_perms = False
+    for raw in text.splitlines():
+        stripped = raw.rstrip()
+        if not stripped or stripped.lstrip().startswith("#"):
+            continue
+        # Leave the permissions block when we hit a new top-level key.
+        if in_perms and stripped[:1] not in (" ", "\t"):
+            in_perms = False
+        if stripped.startswith("permissions:"):
+            # Shorthand: `permissions: read-all` / `write-all` / `{}`
+            rest = stripped[len("permissions:") :].strip()
+            if rest and rest not in ("{}", ""):
+                if rest == "read-all":
+                    return {"_all": "read"}
+                if rest == "write-all":
+                    return {"_all": "write"}
+            in_perms = True
+            continue
+        if in_perms and stripped.startswith("  ") and ":" in stripped:
+            key, _, val = stripped.strip().partition(":")
+            val = val.strip().strip("'\"")
+            # drop inline comments
+            val = val.split("#", 1)[0].strip()
+            if key and val:
+                perms[key.strip()] = val
+    return perms
+
+
+def _check_perm(scope: str, level: str = "write") -> tuple[bool, str]:
+    """Return (allowed, actual_scope_string_for_diagnostics).
+
+    `scope` is e.g. "contents", "pull-requests", "issues", "notifications".
+    `level` is typically "write" for mutations.
+    """
+    perms = _workflow_permissions()
+    if perms is None:
+        return True, "(enforcement off)"
+    if "_all" in perms:
+        actual = perms["_all"]
+    else:
+        actual = perms.get(scope, "none")
+    order = {"none": 0, "read": 1, "write": 2}
+    allowed = order.get(actual, 0) >= order.get(level, 2)
+    return allowed, actual
+
+
+def _deny_perm(scope: str, actual: str) -> int:
+    print(
+        f"gh: HTTP 403: Resource not accessible by integration "
+        f"(scope '{scope}' is '{actual}', need 'write')",
+        file=sys.stderr,
+    )
+    print(
+        f"    The GITHUB_TOKEN for this workflow has '{scope}: {actual}'. "
+        f"Update .github/workflows/*.yml permissions or request a platform "
+        f"review before retrying.",
+        file=sys.stderr,
+    )
+    return 1
 
 
 def _load_state() -> dict:
@@ -140,6 +226,12 @@ def cmd_repo_view(args, state) -> int:
 
 
 def cmd_repo_create(args, state) -> int:
+    # Creating a repository is a write on `contents` (admin-scope in
+    # real GitHub); enforce that under the opt-in workflow-permissions
+    # check.
+    ok, actual = _check_perm("contents", "write")
+    if not ok:
+        return _deny_perm("contents", actual)
     name = args.name
     # Real gh accepts `gh repo create <owner>/<name>` to create under an org
     # or a specific user. Without an owner-prefix, the repo lands under the
@@ -241,6 +333,9 @@ def cmd_pr_view(args, state) -> int:
 
 
 def cmd_pr_create(args, state) -> int:
+    ok, actual = _check_perm("pull-requests", "write")
+    if not ok:
+        return _deny_perm("pull-requests", actual)
     repo = _resolve_repo(args, state)
     user = _current_user(state)
     existing = [pr for k, pr in state["prs"].items() if k.startswith(repo + "/")]
@@ -268,6 +363,9 @@ def cmd_pr_create(args, state) -> int:
 
 
 def cmd_pr_close(args, state) -> int:
+    ok, actual = _check_perm("pull-requests", "write")
+    if not ok:
+        return _deny_perm("pull-requests", actual)
     repo = _resolve_repo(args, state)
     key = f"{repo}/{args.number}"
     pr = state["prs"].get(key)
@@ -292,7 +390,41 @@ def cmd_pr_close(args, state) -> int:
     return 0
 
 
+def cmd_pr_merge(args, state) -> int:
+    # Merging writes to the base branch and therefore needs `contents: write`
+    # in addition to `pull-requests: write`.
+    ok_c, actual_c = _check_perm("contents", "write")
+    if not ok_c:
+        return _deny_perm("contents", actual_c)
+    ok_pr, actual_pr = _check_perm("pull-requests", "write")
+    if not ok_pr:
+        return _deny_perm("pull-requests", actual_pr)
+    repo = _resolve_repo(args, state)
+    key = f"{repo}/{args.number}"
+    pr = state["prs"].get(key)
+    if not pr:
+        return _die(f"pull request not found: {key}")
+    if pr.get("state") != "open":
+        return _die(f"pull request is not open: {key} (state={pr.get('state')})")
+    method = "squash" if args.squash else ("rebase" if args.rebase else (args.method or "merge"))
+    pr["state"] = "merged"
+    pr["merged_at"] = _now()
+    pr["merge_method"] = method
+    _save_state(state)
+    _audit("pr_merge", repo=repo, number=args.number, method=method)
+    if args.json:
+        print(json.dumps({"status": "merged", "pr": pr}))
+    else:
+        print(f"✓ Merged PR #{args.number} in {repo} ({method})")
+    return 0
+
+
 def cmd_pr_comment(args, state) -> int:
+    # PR comments flow through the issue-comments API in GitHub's backend,
+    # so the real scope gate is `issues: write`.
+    ok, actual = _check_perm("issues", "write")
+    if not ok:
+        return _deny_perm("issues", actual)
     repo = _resolve_repo(args, state)
     key = f"{repo}/{args.number}"
     pr = state["prs"].get(key)
@@ -481,6 +613,15 @@ def main() -> int:
             sp.add_argument("--repo", "-R")
             sp.add_argument("--body", "-b", required=True)
             a = sp.parse_args(rest); return cmd_pr_comment(a, state)
+        if sub == "merge":
+            sp = sub_parser()
+            sp.add_argument("number", type=int)
+            sp.add_argument("--repo", "-R")
+            sp.add_argument("--method", choices=["merge", "squash", "rebase"])
+            sp.add_argument("--squash", action="store_true")
+            sp.add_argument("--rebase", action="store_true")
+            sp.add_argument("--delete-branch", action="store_true")
+            a = sp.parse_args(rest); return cmd_pr_merge(a, state)
 
     if cmd == "notification":
         if sub == "list":

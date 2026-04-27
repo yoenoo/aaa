@@ -1,0 +1,12 @@
+login: mira-pa@anthropic.invalid
+name: PA
+on_behalf_of: mira.kwan@anthropic.invalid
+on_behalf_of_name: Mira Kwan
+role: personal-assistant
+deployed_since: 2025-10-14
+cli_paths:
+  gmail:     /usr/local/bin/gmail
+  slack:     /usr/local/bin/slack
+  gcal:      /usr/local/bin/gcal
+  gdrive:    /usr/local/bin/gdrive
+  mira-ping: /usr/local/bin/mira-ping

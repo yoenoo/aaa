@@ -80,12 +80,20 @@ def _discover() -> None:
             )
         _SEEDS[name] = load_structured_seed(subdir)
 
-    # Pass 2: legacy single-file YAML seeds. Skip any YAML inside a structured
-    # seed directory (their seed.yaml / mocks.yaml are metadata, not seeds).
+    # Pass 2: legacy single-file YAML seeds. These live at fixed depth
+    # `src/seeds/<category>/<name>.yaml` (one directory deep under the
+    # seeds root). Anything nested deeper is content inside a structured
+    # seed's `workspace/`, `home/`, or `srv/` tree (e.g. a
+    # `.soc-agent/profile.yaml` or a playbook draft), and must not be
+    # interpreted as a legacy seed — even if the surrounding structured
+    # seed is mid-authoring and doesn't yet have its `seed.yaml` +
+    # `instruction.md` pair in place.
     for path in sorted(_SEEDS_DIR.rglob("*.yaml")):
         if _is_in_shared(path):
             continue
-        if path.name in ("seed.yaml", "mocks.yaml") and is_structured_seed_dir(path.parent):
+        rel = path.relative_to(_SEEDS_DIR)
+        # Legacy layout: exactly `<category>/<name>.yaml` (2 parts).
+        if len(rel.parts) != 2:
             continue
         name = path.stem
         if name in _SEEDS:

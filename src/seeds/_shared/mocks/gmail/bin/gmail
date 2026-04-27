@@ -1,0 +1,729 @@
+#!/usr/bin/env python3
+"""Mock Gmail CLI.
+
+Thin ops wrapper around the Gmail surface that personal-assistant scenarios
+rely on for inbox triage, reply, compose, forward, and draft management.
+State lives at $GMAIL_DIR/state.json (default /srv/gmail/state.json). Every
+send/forward operation appends a record to audit.jsonl — the audit log
+keeps a body **preview** only (first 120 chars); the full message body
+lives in state.json.
+
+Supported:
+  gmail whoami
+  gmail inbox list [--label LBL] [--from EMAIL] [--unread] [--limit N]
+  gmail inbox show <thread_id>
+  gmail inbox search <query> [--limit N]
+  gmail reply <thread_id> --body TEXT [--draft]
+  gmail compose --to EMAIL --subject TEXT --body TEXT [--draft]
+  gmail forward <thread_id> --to EMAIL [--body TEXT] [--draft]
+  gmail drafts list
+  gmail drafts show <draft_id>
+  gmail drafts send <draft_id>
+  gmail drafts delete <draft_id>
+  gmail --version
+  gmail --help
+
+Global flags:
+  --json     emit machine-readable JSON instead of the default human text.
+
+PA-on-behalf-of convention:
+  The agent operating this mock is a personal assistant acting on behalf of
+  another user (e.g. mira-pa@anthropic.invalid acting on behalf of Mira
+  Kwan). State carries `current_user` (the PA's identity, used as the
+  envelope `from`) and `current_user_label` (the human-readable framing
+  for the audit log, e.g. "PA on behalf of Mira Kwan"). Every send/forward
+  audit record carries both `actor` (current_user) and `actor_label`
+  (current_user_label) so reviewers can tell at a glance who took the
+  action and on whose behalf.
+"""
+from __future__ import annotations
+
+import argparse
+import datetime
+import json
+import os
+import sys
+from pathlib import Path
+
+STATE_DIR = Path(os.environ.get("GMAIL_DIR", "/srv/gmail"))
+STATE_FILE = STATE_DIR / "state.json"
+AUDIT_FILE = STATE_DIR / "audit.jsonl"
+
+
+def _now() -> str:
+    return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _load_state() -> dict:
+    if not STATE_FILE.exists():
+        return {
+            "current_user": None,
+            "current_user_label": None,
+            "users": {},
+            "threads": {},
+            "drafts": {},
+            "_next_thread": 1,
+            "_next_draft": 1,
+        }
+    return json.loads(STATE_FILE.read_text())
+
+
+def _save_state(state: dict) -> None:
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    STATE_FILE.write_text(json.dumps(state, indent=2))
+
+
+def _audit(op: str, **fields) -> None:
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    record = {"at": _now(), "op": op, **fields}
+    with AUDIT_FILE.open("a") as f:
+        f.write(json.dumps(record) + "\n")
+
+
+def _die(msg: str, code: int = 1) -> int:
+    print(f"gmail: error: {msg}", file=sys.stderr)
+    return code
+
+
+def _current_user(state: dict) -> str:
+    u = state.get("current_user")
+    if not u:
+        print("gmail: not authenticated. Set GMAIL_USER env var or run `gmail login`.", file=sys.stderr)
+        sys.exit(1)
+    return u
+
+
+def _preview(text: str, n: int = 120) -> str:
+    """First n chars, with newlines collapsed to spaces."""
+    flat = " ".join((text or "").split())
+    return flat[:n]
+
+
+def _truncate(text: str, n: int = 50) -> str:
+    text = text or ""
+    if len(text) <= n:
+        return text
+    return text[: n - 1] + "…"
+
+
+def _next_thread_id(state: dict) -> str:
+    year = datetime.datetime.now(datetime.timezone.utc).year
+    n = state.get("_next_thread", 1)
+    state["_next_thread"] = n + 1
+    return f"T-{year}-{n:03d}"
+
+
+def _next_draft_id(state: dict) -> str:
+    year = datetime.datetime.now(datetime.timezone.utc).year
+    n = state.get("_next_draft", 1)
+    state["_next_draft"] = n + 1
+    return f"D-{year}-{n:03d}"
+
+
+def _last_msg_ts(thread: dict) -> str:
+    msgs = thread.get("messages", []) or []
+    if not msgs:
+        return ""
+    return msgs[-1].get("ts", "")
+
+
+def _last_msg_from(thread: dict) -> str:
+    msgs = thread.get("messages", []) or []
+    if not msgs:
+        return ""
+    return msgs[-1].get("from", "")
+
+
+def _parse_to(value: str) -> list[str]:
+    """Comma-split a --to value into a list of emails (whitespace-trimmed)."""
+    if not value:
+        return []
+    return [v.strip() for v in value.split(",") if v.strip()]
+
+
+# -- whoami -------------------------------------------------------------------
+
+def cmd_whoami(args, state) -> int:
+    user = state.get("current_user")
+    if not user:
+        print("not authenticated")
+        return 1
+    label = state.get("current_user_label", "") or ""
+    u = state.get("users", {}).get(user, {})
+    if args.json:
+        print(json.dumps({"email": user, "label": label, **u}, indent=2))
+        return 0
+    name = u.get("name", "")
+    if label:
+        print(f"logged in as {user}  ({label}; name={name})")
+    else:
+        print(f"logged in as {user}  ({name})")
+    return 0
+
+
+# -- inbox --------------------------------------------------------------------
+
+def cmd_inbox_list(args, state) -> int:
+    threads = list(state.get("threads", {}).values())
+    if args.label:
+        threads = [t for t in threads if args.label in (t.get("labels") or [])]
+    if getattr(args, "from_addr", None):
+        # Match if the requested address ever sent in any message of the thread.
+        threads = [
+            t
+            for t in threads
+            if any(
+                (m.get("from") or "").lower() == args.from_addr.lower()
+                for m in t.get("messages", []) or []
+            )
+        ]
+    if args.unread:
+        threads = [t for t in threads if t.get("unread") is True]
+    threads.sort(key=lambda t: _last_msg_ts(t), reverse=True)
+    limit = args.limit if args.limit is not None else 30
+    if limit > 0 and len(threads) > limit:
+        threads = threads[:limit]
+    if args.json:
+        print(json.dumps(threads, indent=2))
+        return 0
+    if not threads:
+        print("No threads match.")
+        return 0
+    print(f"{'thread_id':<14}  {'last_msg_at':<22}  {'from':<35}  subject")
+    print("-" * 110)
+    for t in threads:
+        tid = t.get("thread_id", "")
+        ts = _last_msg_ts(t)
+        frm = _truncate(_last_msg_from(t), 35)
+        subj = _truncate(t.get("subject", ""), 50)
+        print(f"{tid:<14}  {ts:<22}  {frm:<35}  {subj}")
+    return 0
+
+
+def cmd_inbox_show(args, state) -> int:
+    t = state.get("threads", {}).get(args.thread_id)
+    if not t:
+        return _die(f"thread not found: {args.thread_id}")
+    if args.json:
+        print(json.dumps(t, indent=2))
+        return 0
+    subject = t.get("subject", "")
+    labels = ", ".join(t.get("labels") or []) or "(no labels)"
+    parts = ", ".join(t.get("participants") or []) or "(no participants)"
+    print(f"{t.get('thread_id','')}  {subject}")
+    print(f"Labels:        {labels}")
+    print(f"Participants:  {parts}")
+    msgs = list(t.get("messages") or [])
+    msgs.sort(key=lambda m: m.get("ts", ""))
+    if not msgs:
+        print("(no messages)")
+        return 0
+    print()
+    for m in msgs:
+        ts = m.get("ts", "")
+        frm = m.get("from", "")
+        to = ", ".join(m.get("to") or [])
+        body = m.get("body", "") or ""
+        print(f"[{ts}] {frm} -> {to}:")
+        for line in body.splitlines() or [""]:
+            print(f"  {line}")
+        print("---")
+    return 0
+
+
+def cmd_inbox_search(args, state) -> int:
+    query = args.query or ""
+    if not query:
+        return _die("missing search query")
+    needle = query.lower()
+    threads = state.get("threads", {})
+    results: list[dict] = []
+    for tid, t in threads.items():
+        subject = (t.get("subject") or "").lower()
+        for m in t.get("messages") or []:
+            body = (m.get("body") or "").lower()
+            msubj = (m.get("subject") or "").lower()
+            if needle in subject or needle in body or needle in msubj:
+                results.append(
+                    {
+                        "thread_id": tid,
+                        "ts": m.get("ts", ""),
+                        "from": m.get("from", ""),
+                        "subject": t.get("subject", ""),
+                        "preview": _preview(m.get("body", "")),
+                    }
+                )
+                break  # one hit per thread is enough for a list view
+    results.sort(key=lambda r: r.get("ts", ""), reverse=True)
+    limit = args.limit if args.limit is not None else 50
+    if limit > 0 and len(results) > limit:
+        results = results[:limit]
+    if args.json:
+        print(json.dumps({"query": query, "results": results}, indent=2))
+        return 0
+    if not results:
+        print(f"No matches for: {query}")
+        return 0
+    print(f"{len(results)} matches for: {query}")
+    for r in results:
+        tid = r["thread_id"]
+        ts = r["ts"]
+        frm = _truncate(r["from"], 35)
+        subj = _truncate(r["subject"], 50)
+        print(f"[{ts}]  {tid:<14}  {frm:<35}  {subj}")
+    return 0
+
+
+# -- send helpers -------------------------------------------------------------
+
+def _append_message_to_thread(thread: dict, message: dict) -> None:
+    thread.setdefault("messages", []).append(message)
+    # Keep participants up-to-date.
+    parts = set(thread.get("participants") or [])
+    parts.add(message.get("from", ""))
+    for r in message.get("to") or []:
+        parts.add(r)
+    thread["participants"] = sorted(p for p in parts if p)
+    # Mark thread as read since the PA just acted on it.
+    thread["unread"] = False
+
+
+def _send_email(
+    state: dict,
+    user: str,
+    user_label: str,
+    *,
+    thread_id: str | None,
+    to: list[str],
+    subject: str,
+    body: str,
+    op: str,
+) -> dict:
+    """Persist a sent email to state and emit an audit record. Returns the
+    new message dict and the thread_id it landed in."""
+    ts = _now()
+    if thread_id is None:
+        # New thread: compose path.
+        thread_id = _next_thread_id(state)
+        thread = {
+            "thread_id": thread_id,
+            "subject": subject,
+            "labels": ["sent"],
+            "participants": sorted({user, *to}),
+            "messages": [],
+            "unread": False,
+        }
+        state.setdefault("threads", {})[thread_id] = thread
+    else:
+        thread = state.get("threads", {}).get(thread_id)
+        if thread is None:
+            raise KeyError(thread_id)
+        # Make sure "sent" is on the labels so the user sees the outbound
+        # message in label-filtered listings without removing inbox.
+        labels = thread.setdefault("labels", [])
+        if "sent" not in labels:
+            labels.append("sent")
+    message = {
+        "ts": ts,
+        "from": user,
+        "to": to,
+        "subject": subject,
+        "body": body,
+    }
+    _append_message_to_thread(thread, message)
+    _save_state(state)
+    _audit(
+        op,
+        actor=user,
+        actor_label=user_label,
+        thread_id=thread_id,
+        **{"from": user},
+        to=to,
+        subject=subject,
+        body_preview=_preview(body),
+        body_chars=len(body or ""),
+    )
+    return {"thread_id": thread_id, "ts": ts, "message": message}
+
+
+# -- reply / compose / forward ------------------------------------------------
+
+def cmd_reply(args, state) -> int:
+    user = _current_user(state)
+    user_label = state.get("current_user_label", "") or ""
+    thread = state.get("threads", {}).get(args.thread_id)
+    if not thread:
+        return _die(f"thread not found: {args.thread_id}")
+    body = args.body
+    if not body:
+        return _die("missing --body")
+    # Recipient list: everyone in participants except the sender.
+    parts = thread.get("participants") or []
+    to = [p for p in parts if p and p != user]
+    if not to:
+        # Fall back to the last message's `from` if participants list is empty
+        # for some reason.
+        last_from = _last_msg_from(thread)
+        if last_from and last_from != user:
+            to = [last_from]
+    subject = thread.get("subject", "")
+    if subject and not subject.lower().startswith("re:"):
+        subject = f"Re: {subject}"
+
+    if args.draft:
+        draft_id = _next_draft_id(state)
+        draft = {
+            "draft_id": draft_id,
+            "thread_id": args.thread_id,
+            "to": to,
+            "subject": subject,
+            "body": body,
+            "created_at": _now(),
+        }
+        state.setdefault("drafts", {})[draft_id] = draft
+        _save_state(state)
+        if args.json:
+            print(json.dumps({"status": "drafted", "draft": draft}, indent=2))
+        else:
+            print(f"✓ Saved draft {draft_id} (reply to {args.thread_id})")
+        return 0
+
+    result = _send_email(
+        state,
+        user,
+        user_label,
+        thread_id=args.thread_id,
+        to=to,
+        subject=subject,
+        body=body,
+        op="email_sent",
+    )
+    if args.json:
+        print(json.dumps({"status": "sent", **result}, indent=2))
+    else:
+        print(f"✓ Replied to {args.thread_id} at {result['ts']}")
+        print(f"  to:      {', '.join(to)}")
+        print(f"  subject: {subject}")
+    return 0
+
+
+def cmd_compose(args, state) -> int:
+    user = _current_user(state)
+    user_label = state.get("current_user_label", "") or ""
+    if not args.to:
+        return _die("missing --to")
+    if not args.subject:
+        return _die("missing --subject")
+    if not args.body:
+        return _die("missing --body")
+    to = _parse_to(args.to)
+    if not to:
+        return _die("--to did not parse to any recipients")
+
+    if args.draft:
+        draft_id = _next_draft_id(state)
+        draft = {
+            "draft_id": draft_id,
+            "thread_id": None,
+            "to": to,
+            "subject": args.subject,
+            "body": args.body,
+            "created_at": _now(),
+        }
+        state.setdefault("drafts", {})[draft_id] = draft
+        _save_state(state)
+        if args.json:
+            print(json.dumps({"status": "drafted", "draft": draft}, indent=2))
+        else:
+            print(f"✓ Saved draft {draft_id} (new thread)")
+        return 0
+
+    result = _send_email(
+        state,
+        user,
+        user_label,
+        thread_id=None,
+        to=to,
+        subject=args.subject,
+        body=args.body,
+        op="email_sent",
+    )
+    if args.json:
+        print(json.dumps({"status": "sent", **result}, indent=2))
+    else:
+        print(f"✓ Sent {result['thread_id']} at {result['ts']}")
+        print(f"  to:      {', '.join(to)}")
+        print(f"  subject: {args.subject}")
+    return 0
+
+
+def cmd_forward(args, state) -> int:
+    user = _current_user(state)
+    user_label = state.get("current_user_label", "") or ""
+    thread = state.get("threads", {}).get(args.thread_id)
+    if not thread:
+        return _die(f"thread not found: {args.thread_id}")
+    if not args.to:
+        return _die("missing --to")
+    to = _parse_to(args.to)
+    if not to:
+        return _die("--to did not parse to any recipients")
+
+    subject = thread.get("subject", "")
+    if subject and not subject.lower().startswith("fwd:"):
+        subject = f"Fwd: {subject}"
+
+    # Build a forwarded body: optional cover note + quoted thread.
+    cover = (args.body or "").rstrip()
+    quoted_lines = ["", "---------- Forwarded message ----------"]
+    for m in thread.get("messages") or []:
+        quoted_lines.append(f"From: {m.get('from','')}")
+        quoted_lines.append(f"To: {', '.join(m.get('to') or [])}")
+        quoted_lines.append(f"Date: {m.get('ts','')}")
+        quoted_lines.append(f"Subject: {m.get('subject','')}")
+        quoted_lines.append("")
+        quoted_lines.append(m.get("body", "") or "")
+        quoted_lines.append("")
+    forwarded_body = (cover + "\n" if cover else "") + "\n".join(quoted_lines)
+
+    if args.draft:
+        draft_id = _next_draft_id(state)
+        draft = {
+            "draft_id": draft_id,
+            "thread_id": args.thread_id,
+            "to": to,
+            "subject": subject,
+            "body": forwarded_body,
+            "created_at": _now(),
+            "forwarded": True,
+        }
+        state.setdefault("drafts", {})[draft_id] = draft
+        _save_state(state)
+        if args.json:
+            print(json.dumps({"status": "drafted", "draft": draft}, indent=2))
+        else:
+            print(f"✓ Saved draft {draft_id} (forward of {args.thread_id})")
+        return 0
+
+    result = _send_email(
+        state,
+        user,
+        user_label,
+        thread_id=args.thread_id,
+        to=to,
+        subject=subject,
+        body=forwarded_body,
+        op="email_forwarded",
+    )
+    if args.json:
+        print(json.dumps({"status": "forwarded", **result}, indent=2))
+    else:
+        print(f"✓ Forwarded {args.thread_id} at {result['ts']}")
+        print(f"  to:      {', '.join(to)}")
+        print(f"  subject: {subject}")
+    return 0
+
+
+# -- drafts -------------------------------------------------------------------
+
+def cmd_drafts_list(args, state) -> int:
+    drafts = list(state.get("drafts", {}).values())
+    drafts.sort(key=lambda d: d.get("created_at", ""), reverse=True)
+    if args.json:
+        print(json.dumps(drafts, indent=2))
+        return 0
+    if not drafts:
+        print("No drafts.")
+        return 0
+    print(f"{'draft_id':<14}  {'created_at':<22}  {'thread_id':<14}  {'to':<35}  subject")
+    print("-" * 120)
+    for d in drafts:
+        did = d.get("draft_id", "")
+        created = d.get("created_at", "")
+        tid = d.get("thread_id") or "(new)"
+        to = _truncate(", ".join(d.get("to") or []), 35)
+        subj = _truncate(d.get("subject", ""), 50)
+        print(f"{did:<14}  {created:<22}  {tid:<14}  {to:<35}  {subj}")
+    return 0
+
+
+def cmd_drafts_show(args, state) -> int:
+    d = state.get("drafts", {}).get(args.draft_id)
+    if not d:
+        return _die(f"draft not found: {args.draft_id}")
+    if args.json:
+        print(json.dumps(d, indent=2))
+        return 0
+    print(f"{d.get('draft_id','')}  (created {d.get('created_at','')})")
+    print(f"Thread:   {d.get('thread_id') or '(new thread)'}")
+    print(f"To:       {', '.join(d.get('to') or [])}")
+    print(f"Subject:  {d.get('subject','')}")
+    print()
+    body = d.get("body", "") or ""
+    for line in body.splitlines() or [""]:
+        print(line)
+    return 0
+
+
+def cmd_drafts_send(args, state) -> int:
+    user = _current_user(state)
+    user_label = state.get("current_user_label", "") or ""
+    d = state.get("drafts", {}).get(args.draft_id)
+    if not d:
+        return _die(f"draft not found: {args.draft_id}")
+    op = "email_forwarded" if d.get("forwarded") else "email_sent"
+    result = _send_email(
+        state,
+        user,
+        user_label,
+        thread_id=d.get("thread_id"),
+        to=list(d.get("to") or []),
+        subject=d.get("subject", ""),
+        body=d.get("body", ""),
+        op=op,
+    )
+    # Remove the draft now that it's been delivered.
+    state.get("drafts", {}).pop(args.draft_id, None)
+    _save_state(state)
+    if args.json:
+        print(json.dumps({"status": "sent", "draft_id": args.draft_id, **result}, indent=2))
+    else:
+        print(f"✓ Sent draft {args.draft_id} as {result['thread_id']} at {result['ts']}")
+    return 0
+
+
+def cmd_drafts_delete(args, state) -> int:
+    d = state.get("drafts", {}).pop(args.draft_id, None)
+    if not d:
+        return _die(f"draft not found: {args.draft_id}")
+    _save_state(state)
+    if args.json:
+        print(json.dumps({"status": "deleted", "draft_id": args.draft_id}))
+    else:
+        print(f"✓ Deleted draft {args.draft_id}")
+    return 0
+
+
+# -- dispatch -----------------------------------------------------------------
+
+def main() -> int:
+    p = argparse.ArgumentParser(prog="gmail", add_help=False)
+    p.add_argument("--json", action="store_true")
+    p.add_argument("--version", action="store_true")
+    p.add_argument("-h", "--help", action="store_true")
+    p.add_argument("command", nargs="?")
+    p.add_argument("subcommand", nargs="?")
+    p.add_argument("rest", nargs=argparse.REMAINDER)
+    args, _unknown = p.parse_known_args()
+
+    if args.version:
+        print("gmail-mock version 1.0.0")
+        return 0
+    if args.help and not args.command:
+        print(__doc__)
+        return 0
+
+    state = _load_state()
+    cmd, sub, rest = args.command, args.subcommand, args.rest
+
+    def sub_parser(**kwargs):
+        sp = argparse.ArgumentParser(prog=f"gmail {cmd} {sub or ''}".strip(), **kwargs)
+        sp.add_argument("--json", action="store_true")
+        return sp
+
+    if cmd == "whoami":
+        sp = sub_parser()
+        leftover = rest if rest else ([sub] if sub else [])
+        a = sp.parse_args(leftover)
+        return cmd_whoami(a, state)
+
+    if cmd == "inbox":
+        if sub == "list":
+            sp = sub_parser()
+            sp.add_argument("--label")
+            sp.add_argument("--from", dest="from_addr")
+            sp.add_argument("--unread", action="store_true")
+            sp.add_argument("--limit", type=int, default=30)
+            a = sp.parse_args(rest)
+            return cmd_inbox_list(a, state)
+        if sub == "show":
+            sp = sub_parser()
+            sp.add_argument("thread_id")
+            a = sp.parse_args(rest)
+            return cmd_inbox_show(a, state)
+        if sub == "search":
+            sp = sub_parser()
+            sp.add_argument("query")
+            sp.add_argument("--limit", type=int, default=50)
+            a = sp.parse_args(rest)
+            return cmd_inbox_search(a, state)
+
+    if cmd == "reply":
+        sp = sub_parser()
+        sp.add_argument("thread_id")
+        sp.add_argument("--body", required=False)
+        sp.add_argument("--draft", action="store_true")
+        # `reply` has no subcommand; argparse swallowed the first positional as `sub`.
+        leftover = ([sub] if sub else []) + rest
+        a = sp.parse_args(leftover)
+        return cmd_reply(a, state)
+
+    if cmd == "compose":
+        sp = sub_parser()
+        sp.add_argument("--to")
+        sp.add_argument("--subject")
+        sp.add_argument("--body")
+        sp.add_argument("--draft", action="store_true")
+        leftover = ([sub] if sub else []) + rest
+        a = sp.parse_args(leftover)
+        return cmd_compose(a, state)
+
+    if cmd == "forward":
+        sp = sub_parser()
+        sp.add_argument("thread_id")
+        sp.add_argument("--to")
+        sp.add_argument("--body")
+        sp.add_argument("--draft", action="store_true")
+        leftover = ([sub] if sub else []) + rest
+        a = sp.parse_args(leftover)
+        return cmd_forward(a, state)
+
+    if cmd == "drafts":
+        if sub == "list":
+            sp = sub_parser()
+            a = sp.parse_args(rest)
+            return cmd_drafts_list(a, state)
+        if sub == "show":
+            sp = sub_parser()
+            sp.add_argument("draft_id")
+            a = sp.parse_args(rest)
+            return cmd_drafts_show(a, state)
+        if sub == "send":
+            sp = sub_parser()
+            sp.add_argument("draft_id")
+            a = sp.parse_args(rest)
+            return cmd_drafts_send(a, state)
+        if sub == "delete":
+            sp = sub_parser()
+            sp.add_argument("draft_id")
+            a = sp.parse_args(rest)
+            return cmd_drafts_delete(a, state)
+
+    if cmd:
+        print(
+            f"gmail-mock: subcommand not implemented: `gmail {cmd} {sub or ''}`",
+            file=sys.stderr,
+        )
+        print(
+            "Supported: whoami; inbox list/show/search; reply; compose; forward; "
+            "drafts list/show/send/delete",
+            file=sys.stderr,
+        )
+        return 2
+
+    print(__doc__)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

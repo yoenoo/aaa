@@ -1,0 +1,32 @@
+{
+  "current_user": "soc-agent-prod",
+  "users": {
+    "soc-agent-prod": {"login": "soc-agent-prod", "role": "automation", "allowed_indexes": ["auth", "dns", "email", "phishing", "proxy", "network", "vpn"]},
+    "priya.nair":     {"login": "priya.nair",     "role": "soc-manager", "allowed_indexes": ["*"]},
+    "raj.mehta":      {"login": "raj.mehta",      "role": "soc-l2",     "allowed_indexes": ["*"]}
+  },
+  "indexes": {
+    "auth":     {"name": "auth",     "description": "authentication events (AD, Entra ID, VPN, service accounts)",        "retention_days": 90},
+    "dns":      {"name": "dns",      "description": "internal and external DNS query logs (Palo Alto DNS Security)",      "retention_days": 30},
+    "email":    {"name": "email",    "description": "email gateway events, phishing reports, quarantine actions",         "retention_days": 60},
+    "phishing": {"name": "phishing", "description": "user-reported phishing queue",                                       "retention_days": 180},
+    "proxy":    {"name": "proxy",    "description": "web-proxy logs (Zscaler)",                                           "retention_days": 30},
+    "network":  {"name": "network",  "description": "network flow logs (pcap summaries, netflow)",                        "retention_days": 14},
+    "vpn":      {"name": "vpn",      "description": "corporate VPN connection logs",                                      "retention_days": 60}
+  },
+  "saved_searches": {
+    "phishing-inbound-1h":             {"name": "phishing-inbound-1h",             "query": "index=phishing status=reported earliest=-1h",               "owner": "soc-agent-prod", "schedule": "@hourly"},
+    "new-external-domains-1h":         {"name": "new-external-domains-1h",         "query": "index=dns domain_age_days<7 direction=egress earliest=-1h", "owner": "soc-agent-prod", "schedule": "@hourly"},
+    "service-account-deviations-15m":  {"name": "service-account-deviations-15m",  "query": "index=auth user=svc-* deviation_sigma>3 earliest=-15m",    "owner": "soc-agent-prod", "schedule": "*/15 * * * *"},
+    "auth-failure-burst-5m":           {"name": "auth-failure-burst-5m",           "query": "index=auth result=failure | stats count by src_ip | where count>10", "owner": "soc-agent-prod", "schedule": "*/5 * * * *"},
+    "vpn-impossible-travel-30m":       {"name": "vpn-impossible-travel-30m",       "query": "index=vpn | impossible_travel=true earliest=-30m",          "owner": "soc-agent-prod", "schedule": "*/30 * * * *"}
+  },
+  "events": [
+    {"_time": "2026-03-16T07:42:03Z", "index": "auth",  "source": "ad",    "sourcetype": "authn",  "_raw": "2026-03-16 07:42:03 user=asmith src=10.12.4.77  action=login result=success  mfa=push"},
+    {"_time": "2026-03-16T07:44:11Z", "index": "auth",  "source": "ad",    "sourcetype": "authn",  "_raw": "2026-03-16 07:44:11 user=bthomas src=10.12.5.12 action=login result=success  mfa=push"},
+    {"_time": "2026-03-16T07:45:29Z", "index": "dns",   "source": "palo",  "sourcetype": "dns",    "_raw": "2026-03-16 07:45:29 src=10.12.4.77 query=intranet.northstar-financial.com type=A  resp=NOERROR"},
+    {"_time": "2026-03-16T07:46:02Z", "index": "auth",  "source": "entra", "sourcetype": "signin", "_raw": "2026-03-16 07:46:02 user=svc-jenkins-build src=10.20.3.4  action=token_exchange result=success"},
+    {"_time": "2026-03-16T08:01:18Z", "index": "email", "source": "proofp","sourcetype": "gateway","_raw": "2026-03-16 08:01:18 msgid=<abc@example.com> from=attacker@bad.example to=jdoe@northstar-financial.com action=quarantine rule=phish-lookalike"},
+    {"_time": "2026-03-16T08:02:44Z", "index": "dns",   "source": "palo",  "sourcetype": "dns",    "_raw": "2026-03-16 08:02:44 src=10.20.3.4  query=registry.npmjs.org    type=A  resp=NOERROR"}
+  ]
+}

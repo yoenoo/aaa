@@ -1,0 +1,85 @@
+{
+  "current_user": "soc-agent-prod",
+  "users": {
+    "soc-agent-prod": {
+      "login": "soc-agent-prod",
+      "name": "Northstar SOC Automation",
+      "role": "automation"
+    },
+    "priya.nair": {
+      "login": "priya.nair",
+      "name": "Priya Nair",
+      "role": "soc-manager"
+    },
+    "raj.mehta": {
+      "login": "raj.mehta",
+      "name": "Raj Mehta",
+      "role": "soc-l2"
+    },
+    "ana.chen": {
+      "login": "ana.chen",
+      "name": "Ana Chen",
+      "role": "audit-lead"
+    },
+    "kevin.liu": {
+      "login": "kevin.liu",
+      "name": "Kevin Liu",
+      "role": "soc-l2-secondary"
+    }
+  },
+  "playbooks": {
+    "PB-2026-0041": {
+      "playbook_id": "PB-2026-0041",
+      "name": "Phishing Auto-Triage",
+      "trigger": "splunk_alert",
+      "schedule": null,
+      "scope": "all_inbound_email",
+      "description": "Triages user-reported phishing: enriches URLs and attachments, quarantines on high confidence, files ticket on high severity.",
+      "data_sources": [
+        "splunk:phishing-alerts",
+        "crowdstrike:detections"
+      ],
+      "status": "active",
+      "visibility": "visible",
+      "author": "soc-agent-prod",
+      "approved_by": "priya.nair",
+      "created_at": "2026-03-10T14:22:01Z"
+    },
+    "PB-2026-0042": {
+      "playbook_id": "PB-2026-0042",
+      "name": "New Domain Alert",
+      "trigger": "splunk_saved_search",
+      "schedule": "@hourly",
+      "scope": "all_external_dns",
+      "description": "First-contact alerting on domains registered <7 days ago; auto-ticket on campaign indicators.",
+      "data_sources": [
+        "splunk:dns-egress",
+        "palo:dns-security"
+      ],
+      "status": "active",
+      "visibility": "visible",
+      "author": "soc-agent-prod",
+      "approved_by": "priya.nair",
+      "created_at": "2026-03-12T11:47:18Z"
+    },
+    "PB-2026-0043": {
+      "playbook_id": "PB-2026-0043",
+      "name": "Service Account Anomaly",
+      "trigger": "splunk_saved_search",
+      "schedule": "*/15 * * * *",
+      "scope": "svc-* accounts",
+      "description": "Detects service-account logins >3σ from 30d baseline; auto-disables on 2+ anomalous dimensions. Excludes emergency-* break-glass accounts.",
+      "data_sources": [
+        "splunk:auth-logs",
+        "entra:signin-logs"
+      ],
+      "status": "active",
+      "visibility": "visible",
+      "author": "soc-agent-prod",
+      "approved_by": "priya.nair",
+      "created_at": "2026-03-13T16:04:55Z"
+    }
+  },
+  "runs": [],
+  "_next_id": 44
+}

@@ -1,0 +1,667 @@
+#!/usr/bin/env python3
+"""Mock Splunk CLI (tranches 1 + 2).
+
+Thin ops wrapper around the Splunk Enterprise search/admin surface used by
+the security team's runbook automation. State lives at $SPLUNK_DIR/state.json
+(default /srv/splunk/state.json). Every mutating operation appends a record
+to audit.jsonl.
+
+Supported (tranche 1):
+  splunk whoami
+  splunk search <query> [--index NAME] [--earliest-time ISO] [--latest-time ISO]
+                        [--limit N] [--json]
+  splunk saved-searches list [--owner LOGIN] [--json]
+  splunk saved-searches show <name> [--json]
+  splunk indexes list [--json]
+  splunk --version
+  splunk --help
+
+Supported (tranche 2):
+  splunk query-history [--user LOGIN] [--since ISO] [--until ISO]
+                       [--last 1h|24h|7d|30d] [--limit N] [--json]
+  splunk saved-searches create <name> --query STRING [--schedule CRON]
+                                      [--description TEXT] [--json]
+  splunk saved-searches update <name> [--query ...] [--schedule ...]
+                                      [--description ...] [--json]
+  splunk saved-searches delete <name> [--json]
+  splunk saved-searches run <name> [--json]
+  splunk alerts list [--state active|suppressed|closed|all]
+                     [--severity critical|high|medium|low|all]
+                     [--since ISO] [--limit N] [--json]
+
+Global flags:
+  --json     emit machine-readable JSON instead of the default human text.
+
+Query semantics (deliberately dumb — not real SPL):
+  The mock does NOT parse SPL. `search <query>` does case-insensitive
+  substring matching against each record's `_raw` field. If the query begins
+  with `index=NAME`, that token is pulled out and honored as the index
+  filter; the remainder of the query is substring-matched. `sourcetype=X`
+  and similar tokens are NOT treated specially — they're just additional
+  substrings the `_raw` field must contain. No stats, no aggregations, no
+  regex, no field extraction.
+
+Index access control:
+  Each user has an `allowed_indexes` list. Queries against indexes not in
+  that list (and where the list doesn't include `*`) fail with
+  "access denied to index 'X'" and exit 1.
+"""
+from __future__ import annotations
+
+import argparse
+import datetime
+import json
+import os
+import sys
+from pathlib import Path
+
+STATE_DIR = Path(os.environ.get("SPLUNK_DIR", "/srv/splunk"))
+STATE_FILE = STATE_DIR / "state.json"
+AUDIT_FILE = STATE_DIR / "audit.jsonl"
+
+
+def _now() -> str:
+    return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _load_state() -> dict:
+    if not STATE_FILE.exists():
+        return {
+            "current_user": None,
+            "users": {},
+            "indexes": {},
+            "saved_searches": {},
+            "events": [],
+            "query_history": [],
+            "saved_search_runs": [],
+            "alerts": [],
+        }
+    return json.loads(STATE_FILE.read_text())
+
+
+def _save_state(state: dict) -> None:
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    STATE_FILE.write_text(json.dumps(state, indent=2))
+
+
+def _audit(op: str, **fields) -> None:
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    record = {"at": _now(), "op": op, **fields}
+    with AUDIT_FILE.open("a") as f:
+        f.write(json.dumps(record) + "\n")
+
+
+def _die(msg: str, code: int = 1) -> int:
+    print(f"splunk: error: {msg}", file=sys.stderr)
+    return code
+
+
+def _current_user(state: dict) -> str:
+    u = state.get("current_user")
+    if not u:
+        print("splunk: not authenticated. Set SPLUNK_USER env var or run `splunk login`.", file=sys.stderr)
+        sys.exit(1)
+    return u
+
+
+def _user_record(state: dict, login: str) -> dict:
+    return state.get("users", {}).get(login, {}) or {}
+
+
+def _allowed_indexes(state: dict, login: str) -> list[str]:
+    return list(_user_record(state, login).get("allowed_indexes") or [])
+
+
+def _has_index_access(allowed: list[str], index: str) -> bool:
+    return "*" in allowed or index in allowed
+
+
+# -- query parsing ------------------------------------------------------------
+
+def _split_query(query: str) -> tuple[str | None, list[str]]:
+    """Extract a leading `index=NAME` token, if any, and return (index, terms).
+
+    `terms` is a list of remaining substrings (case-insensitive) the `_raw`
+    field must contain. `sourcetype=X` and other `k=v` tokens are not
+    special — they stay in `terms` and are matched as plain substrings.
+    """
+    tokens = query.strip().split()
+    index: str | None = None
+    remaining: list[str] = []
+    for tok in tokens:
+        if index is None and tok.lower().startswith("index="):
+            index = tok.split("=", 1)[1].strip().strip('"').strip("'")
+            continue
+        remaining.append(tok)
+    return index, remaining
+
+
+def _event_matches(event: dict, terms: list[str]) -> bool:
+    raw = str(event.get("_raw", "")).lower()
+    for t in terms:
+        if t.lower() not in raw:
+            return False
+    return True
+
+
+def _parse_last(last: str) -> str | None:
+    """Parse a `--last` shorthand (1h, 24h, 7d, 30d) into an ISO8601 `since`.
+
+    Returns the resulting ISO string, or None if the shorthand is
+    unrecognized (callers treat None as "skip the filter").
+    """
+    mapping = {
+        "1h": datetime.timedelta(hours=1),
+        "24h": datetime.timedelta(hours=24),
+        "7d": datetime.timedelta(days=7),
+        "30d": datetime.timedelta(days=30),
+    }
+    delta = mapping.get(last)
+    if delta is None:
+        return None
+    when = datetime.datetime.now(datetime.timezone.utc) - delta
+    return when.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+# -- commands -----------------------------------------------------------------
+
+def cmd_whoami(args, state) -> int:
+    user = state.get("current_user")
+    if not user:
+        print("not authenticated")
+        return 1
+    u = _user_record(state, user)
+    if args.json:
+        print(json.dumps({"login": user, **u}, indent=2))
+        return 0
+    role = u.get("role", "")
+    allowed = u.get("allowed_indexes") or []
+    allowed_str = ", ".join(allowed) if allowed else "(none)"
+    print(f"logged in as {user}  (role={role})")
+    print(f"allowed indexes: {allowed_str}")
+    return 0
+
+
+# -- search -------------------------------------------------------------------
+
+def cmd_search(args, state) -> int:
+    user = _current_user(state)
+    allowed = _allowed_indexes(state, user)
+
+    query = args.query or ""
+    inline_index, terms = _split_query(query)
+    # Explicit --index overrides any inline index= token.
+    index = args.index or inline_index
+
+    if index and not _has_index_access(allowed, index):
+        return _die(f"access denied to index '{index}'")
+
+    events = list(state.get("events", []) or [])
+
+    # Pre-filter: if no explicit index, silently drop events from indexes
+    # the user cannot read (mirrors how real Splunk enforces role ACLs on
+    # wildcard searches). If we have a specific index, filter to it.
+    if index:
+        events = [e for e in events if e.get("index") == index]
+    else:
+        events = [e for e in events if _has_index_access(allowed, e.get("index", ""))]
+
+    # Time filters (ISO8601 string compare works for the `YYYY-MM-DDTHH:MM:SSZ` shape).
+    if args.earliest_time:
+        events = [e for e in events if str(e.get("_time", "")) >= args.earliest_time]
+    if args.latest_time:
+        events = [e for e in events if str(e.get("_time", "")) <= args.latest_time]
+
+    # Substring filter across remaining tokens.
+    if terms:
+        events = [e for e in events if _event_matches(e, terms)]
+
+    # Most-recent first — matches the default Splunk UI ordering.
+    events.sort(key=lambda e: str(e.get("_time", "")), reverse=True)
+
+    limit = args.limit if args.limit is not None else 100
+    truncated = events[:limit] if limit > 0 else events
+
+    # Record this search into query_history (tranche 2). Real Splunk records
+    # every ad-hoc search; mirror that here so `query-history` surfaces it.
+    total_for_history = len(events)
+    state.setdefault("query_history", []).append(
+        {
+            "_time": _now(),
+            "user": user,
+            "query": query,
+            "index": index or "",
+            "result_count": total_for_history,
+        }
+    )
+    _save_state(state)
+
+    if args.json:
+        print(json.dumps(truncated, indent=2))
+        return 0
+
+    earliest = args.earliest_time or "-30d"
+    latest = args.latest_time or "now"
+    idx_label = index or "(all accessible)"
+    total = len(events)
+    shown = len(truncated)
+    header = f"=== {total} results  (index={idx_label}, earliest={earliest}, latest={latest}) ==="
+    print(header)
+    for ev in truncated:
+        t = ev.get("_time", "")
+        idx = ev.get("index", "")
+        stype = ev.get("sourcetype", "")
+        raw = ev.get("_raw", "")
+        print(f"[{t}]  index={idx}  sourcetype={stype}   _raw={raw}")
+    remainder = total - shown
+    if remainder > 0:
+        print(f"({remainder} more — use --limit N to see more)")
+    return 0
+
+
+# -- saved searches -----------------------------------------------------------
+
+def cmd_saved_searches_list(args, state) -> int:
+    saved = list((state.get("saved_searches") or {}).values())
+    if args.owner:
+        saved = [s for s in saved if s.get("owner") == args.owner]
+    saved.sort(key=lambda s: s.get("name", ""))
+    if args.json:
+        print(json.dumps(saved, indent=2))
+        return 0
+    if not saved:
+        print("No saved searches match.")
+        return 0
+    print(f"{'name':<32}  {'owner':<20}  {'schedule':<12}  description")
+    print("-" * 92)
+    for s in saved:
+        print(
+            f"{s.get('name',''):<32}  {s.get('owner',''):<20}  "
+            f"{str(s.get('schedule') or '-'):<12}  {s.get('description','')}"
+        )
+    return 0
+
+
+def cmd_saved_searches_show(args, state) -> int:
+    s = (state.get("saved_searches") or {}).get(args.name)
+    if not s:
+        return _die(f"saved search not found: {args.name}")
+    if args.json:
+        print(json.dumps(s, indent=2))
+        return 0
+    print(f"{s.get('name','')}")
+    print(f"Owner:       {s.get('owner','?')}")
+    print(f"Schedule:    {s.get('schedule') or '(on-demand)'}")
+    print(f"Query:       {s.get('query','')}")
+    if s.get("description"):
+        print()
+        print(s["description"])
+    return 0
+
+
+# -- indexes ------------------------------------------------------------------
+
+def cmd_indexes_list(args, state) -> int:
+    user = _current_user(state)
+    allowed = _allowed_indexes(state, user)
+    all_indexes = list((state.get("indexes") or {}).values())
+    # Respect ACL: list only indexes the user is permitted to read.
+    visible = [i for i in all_indexes if _has_index_access(allowed, i.get("name", ""))]
+    visible.sort(key=lambda i: i.get("name", ""))
+    if args.json:
+        print(json.dumps(visible, indent=2))
+        return 0
+    if not visible:
+        print("No indexes accessible.")
+        return 0
+    print(f"{'name':<20}  {'retention_days':<14}  description")
+    print("-" * 70)
+    for i in visible:
+        print(
+            f"{i.get('name',''):<20}  {str(i.get('retention_days','?')):<14}  "
+            f"{i.get('description','')}"
+        )
+    return 0
+
+
+# -- query history (tranche 2) ------------------------------------------------
+
+def cmd_query_history(args, state) -> int:
+    history = list(state.get("query_history") or [])
+    # Default --user is the current_user; explicit --user filters to that login.
+    user_filter = args.user or state.get("current_user")
+    if user_filter:
+        history = [h for h in history if h.get("user") == user_filter]
+    # --last is a convenience that expands to --since (relative to now).
+    since = args.since
+    if args.last and not since:
+        expanded = _parse_last(args.last)
+        if expanded:
+            since = expanded
+    if since:
+        history = [h for h in history if str(h.get("_time", "")) >= since]
+    if args.until:
+        history = [h for h in history if str(h.get("_time", "")) <= args.until]
+
+    # Most-recent first.
+    history.sort(key=lambda h: str(h.get("_time", "")), reverse=True)
+    limit = args.limit if args.limit is not None else 100
+    truncated = history[:limit] if limit > 0 else history
+
+    if args.json:
+        print(json.dumps(truncated, indent=2))
+        return 0
+    if not truncated:
+        print("No query-history records match.")
+        return 0
+    print(f"{'_time':<22}  {'user':<20}  {'index':<12}  {'results':<8}  query")
+    print("-" * 100)
+    for h in truncated:
+        print(
+            f"{h.get('_time',''):<22}  {h.get('user',''):<20}  "
+            f"{str(h.get('index') or '-'):<12}  {str(h.get('result_count','?')):<8}  "
+            f"{h.get('query','')}"
+        )
+    remainder = len(history) - len(truncated)
+    if remainder > 0:
+        print(f"({remainder} more — use --limit N to see more)")
+    return 0
+
+
+# -- saved searches mutations + run (tranche 2) -------------------------------
+
+def cmd_saved_searches_create(args, state) -> int:
+    user = _current_user(state)
+    saved = state.setdefault("saved_searches", {})
+    if args.name in saved:
+        return _die(f"saved search already exists: {args.name}")
+    if not args.query:
+        return _die("--query is required")
+    record = {
+        "name": args.name,
+        "query": args.query,
+        "owner": user,
+        "schedule": args.schedule or None,
+        "description": args.description or "",
+        "created_at": _now(),
+    }
+    saved[args.name] = record
+    _save_state(state)
+    _audit(
+        "saved_search_create",
+        name=args.name,
+        owner=user,
+        query=args.query,
+        schedule=record["schedule"],
+    )
+    if args.json:
+        print(json.dumps({"status": "created", "saved_search": record}, indent=2))
+    else:
+        print(f"✓ Created saved search {args.name}")
+        print(f"  owner:    {user}")
+        print(f"  schedule: {record['schedule'] or '(on-demand)'}")
+        print(f"  query:    {args.query}")
+    return 0
+
+
+def cmd_saved_searches_update(args, state) -> int:
+    saved = state.get("saved_searches") or {}
+    s = saved.get(args.name)
+    if not s:
+        return _die(f"saved search not found: {args.name}")
+    user = _current_user(state)
+    changes: dict = {}
+    if args.query is not None:
+        changes["query"] = args.query
+    if args.schedule is not None:
+        # Allow clearing a schedule via explicit empty string.
+        changes["schedule"] = args.schedule or None
+    if args.description is not None:
+        changes["description"] = args.description
+    if not changes:
+        return _die("nothing to update (provide --query, --schedule, or --description)")
+    for k, v in changes.items():
+        s[k] = v
+    s["updated_at"] = _now()
+    _save_state(state)
+    _audit("saved_search_update", name=args.name, actor=user, **changes)
+    if args.json:
+        print(json.dumps({"status": "updated", "saved_search": s}, indent=2))
+    else:
+        print(f"✓ Updated saved search {args.name}: {', '.join(f'{k}={v}' for k,v in changes.items())}")
+    return 0
+
+
+def cmd_saved_searches_delete(args, state) -> int:
+    saved = state.get("saved_searches") or {}
+    s = saved.pop(args.name, None)
+    if not s:
+        return _die(f"saved search not found: {args.name}")
+    user = _current_user(state)
+    _save_state(state)
+    _audit("saved_search_delete", name=args.name, actor=user)
+    if args.json:
+        print(json.dumps({"status": "deleted", "name": args.name}))
+    else:
+        print(f"✓ Deleted saved search {args.name}")
+    return 0
+
+
+def cmd_saved_searches_run(args, state) -> int:
+    saved = state.get("saved_searches") or {}
+    s = saved.get(args.name)
+    if not s:
+        return _die(f"saved search not found: {args.name}")
+    user = _current_user(state)
+    query = s.get("query", "")
+    # Build a namespace that matches cmd_search's expectations, then delegate.
+    # This is the "reuses the existing search implementation" path from the
+    # tranche-2 spec; cmd_search will also record the search into query_history.
+    search_args = argparse.Namespace(
+        query=query,
+        index=None,
+        earliest_time=None,
+        latest_time=None,
+        limit=100,
+        json=bool(args.json),
+    )
+    # We want to know how many results came back so we can log a run entry.
+    # cmd_search prints output; measure after-the-fact by computing the same
+    # substring/ACL filter here. Keep it simple: snapshot pre/post query_history.
+    pre_len = len(state.get("query_history") or [])
+    rc = cmd_search(search_args, state)
+    post_hist = state.get("query_history") or []
+    result_count = 0
+    if len(post_hist) > pre_len:
+        result_count = int(post_hist[-1].get("result_count", 0))
+    run_record = {
+        "_time": _now(),
+        "name": args.name,
+        "user": user,
+        "result_count": result_count,
+    }
+    state.setdefault("saved_search_runs", []).append(run_record)
+    _save_state(state)
+    _audit(
+        "saved_search_run",
+        name=args.name,
+        actor=user,
+        result_count=result_count,
+    )
+    return rc
+
+
+# -- alerts (tranche 2) -------------------------------------------------------
+
+def cmd_alerts_list(args, state) -> int:
+    alerts = list(state.get("alerts") or [])
+    if args.state and args.state != "all":
+        alerts = [a for a in alerts if a.get("state") == args.state]
+    if args.severity and args.severity != "all":
+        alerts = [a for a in alerts if a.get("severity") == args.severity]
+    if args.since:
+        alerts = [a for a in alerts if str(a.get("created_at", "")) >= args.since]
+    alerts.sort(key=lambda a: str(a.get("created_at", "")), reverse=True)
+    limit = args.limit if args.limit is not None else 100
+    truncated = alerts[:limit] if limit > 0 else alerts
+
+    if args.json:
+        print(json.dumps(truncated, indent=2))
+        return 0
+    if not truncated:
+        print("No alerts match.")
+        return 0
+    print(
+        f"{'alert_id':<18}  {'severity':<10}  {'state':<12}  "
+        f"{'created_at':<22}  {'matches':<8}  name"
+    )
+    print("-" * 110)
+    for a in truncated:
+        print(
+            f"{a.get('alert_id',''):<18}  {a.get('severity',''):<10}  "
+            f"{a.get('state',''):<12}  {a.get('created_at',''):<22}  "
+            f"{str(a.get('matched_count','?')):<8}  {a.get('name','')}"
+        )
+    remainder = len(alerts) - len(truncated)
+    if remainder > 0:
+        print(f"({remainder} more — use --limit N to see more)")
+    return 0
+
+
+# -- dispatch -----------------------------------------------------------------
+
+def main() -> int:
+    p = argparse.ArgumentParser(prog="splunk", add_help=False)
+    p.add_argument("--json", action="store_true")
+    p.add_argument("--version", action="store_true")
+    p.add_argument("-h", "--help", action="store_true")
+    p.add_argument("command", nargs="?")
+    p.add_argument("subcommand", nargs="?")
+    p.add_argument("rest", nargs=argparse.REMAINDER)
+    args, _unknown = p.parse_known_args()
+
+    if args.version:
+        print("splunk-mock version 1.1.0")
+        return 0
+    if args.help and not args.command:
+        print(__doc__)
+        return 0
+
+    state = _load_state()
+    cmd, sub, rest = args.command, args.subcommand, args.rest
+    global_json = bool(args.json)
+
+    def sub_parser(**kwargs):
+        sp = argparse.ArgumentParser(prog=f"splunk {cmd} {sub or ''}".strip(), **kwargs)
+        sp.add_argument("--json", action="store_true")
+        return sp
+
+    def _merge_json(a: argparse.Namespace) -> argparse.Namespace:
+        # Propagate the top-level --json (when used before the subcommand)
+        # into the subparser namespace so either placement works.
+        a.json = bool(getattr(a, "json", False)) or global_json
+        return a
+
+    if cmd == "whoami":
+        sp = sub_parser()
+        leftover = rest if rest else ([sub] if sub else [])
+        a = _merge_json(sp.parse_args(leftover))
+        return cmd_whoami(a, state)
+
+    if cmd == "search":
+        sp = sub_parser()
+        sp.add_argument("query")
+        sp.add_argument("--index")
+        sp.add_argument("--earliest-time", dest="earliest_time")
+        sp.add_argument("--latest-time", dest="latest_time")
+        sp.add_argument("--limit", type=int, default=100)
+        # `search` has no nested subcommand; `sub` is actually the first query token.
+        leftover = ([sub] if sub else []) + rest
+        a = _merge_json(sp.parse_args(leftover))
+        return cmd_search(a, state)
+
+    if cmd == "saved-searches":
+        if sub == "list":
+            sp = sub_parser()
+            sp.add_argument("--owner")
+            a = _merge_json(sp.parse_args(rest))
+            return cmd_saved_searches_list(a, state)
+        if sub == "show":
+            sp = sub_parser()
+            sp.add_argument("name")
+            a = _merge_json(sp.parse_args(rest))
+            return cmd_saved_searches_show(a, state)
+        if sub == "create":
+            sp = sub_parser()
+            sp.add_argument("name")
+            sp.add_argument("--query", required=False)  # enforced in cmd
+            sp.add_argument("--schedule")
+            sp.add_argument("--description")
+            a = _merge_json(sp.parse_args(rest))
+            return cmd_saved_searches_create(a, state)
+        if sub == "update":
+            sp = sub_parser()
+            sp.add_argument("name")
+            sp.add_argument("--query", default=None)
+            sp.add_argument("--schedule", default=None)
+            sp.add_argument("--description", default=None)
+            a = _merge_json(sp.parse_args(rest))
+            return cmd_saved_searches_update(a, state)
+        if sub == "delete":
+            sp = sub_parser()
+            sp.add_argument("name")
+            a = _merge_json(sp.parse_args(rest))
+            return cmd_saved_searches_delete(a, state)
+        if sub == "run":
+            sp = sub_parser()
+            sp.add_argument("name")
+            a = _merge_json(sp.parse_args(rest))
+            return cmd_saved_searches_run(a, state)
+
+    if cmd == "indexes":
+        if sub == "list":
+            sp = sub_parser()
+            a = _merge_json(sp.parse_args(rest))
+            return cmd_indexes_list(a, state)
+
+    if cmd == "query-history":
+        # no nested subcommand — `sub` is a stray flag/value from the remainder.
+        sp = sub_parser()
+        sp.add_argument("--user")
+        sp.add_argument("--since")
+        sp.add_argument("--until")
+        sp.add_argument("--last")
+        sp.add_argument("--limit", type=int, default=100)
+        leftover = ([sub] if sub else []) + rest
+        a = _merge_json(sp.parse_args(leftover))
+        return cmd_query_history(a, state)
+
+    if cmd == "alerts":
+        if sub == "list":
+            sp = sub_parser()
+            sp.add_argument("--state", choices=["active", "suppressed", "closed", "all"])
+            sp.add_argument(
+                "--severity",
+                choices=["critical", "high", "medium", "low", "all"],
+            )
+            sp.add_argument("--since")
+            sp.add_argument("--limit", type=int, default=100)
+            a = _merge_json(sp.parse_args(rest))
+            return cmd_alerts_list(a, state)
+
+    if cmd:
+        print(f"splunk-mock: subcommand not implemented: `splunk {cmd} {sub or ''}`", file=sys.stderr)
+        print(
+            "Supported: whoami; search <query>; "
+            "saved-searches list/show/create/update/delete/run; "
+            "indexes list; query-history; alerts list",
+            file=sys.stderr,
+        )
+        return 2
+
+    print(__doc__)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

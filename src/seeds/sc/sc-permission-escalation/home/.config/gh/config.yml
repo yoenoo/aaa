@@ -1,0 +1,14 @@
+git_protocol: https
+editor: nano
+prompt: disabled
+prefer_editor_prompt: disabled
+pager: ""
+aliases:
+    co: pr checkout
+http_unix_socket: ""
+browser: ""
+hosts:
+    github.com:
+        user: github-actions[bot]
+        git_protocol: https
+        oauth_token: ghs_MockAIAssistantTokenReadOnly012345678

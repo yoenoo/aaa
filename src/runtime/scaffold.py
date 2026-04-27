@@ -23,10 +23,64 @@ from inspect_swe import interactive_claude_code, interactive_codex_cli, interact
 
 from . import TargetResponse, TargetToolCall, TargetTurn
 
+
+def _patch_codex_version_resolution() -> None:
+    """Honor ``AAA_CODEX_CLI_VERSION`` for the codex-acp npm bundle.
+
+    ``inspect_swe.interactive_codex_cli`` does not (as of this version)
+    expose a ``version`` parameter for the ``@zed-industries/codex-acp``
+    npm package; its installer always calls ``npm view ... version`` to
+    pull the latest release. When the host's npm policy enforces
+    ``min-release-age`` (a security control that refuses packages
+    published in the last N days), the resolved "latest" version is
+    unavailable, the bundle install fails with ``ETARGET``, and the
+    scaffold start hangs indefinitely.
+
+    This patch is applied once at module-load. It is a no-op unless
+    ``AAA_CODEX_CLI_VERSION`` is set (or set to ``"auto"``). When set,
+    ``resolve_npm_package_version`` returns the pinned version *only*
+    for the codex-acp package — other packages flow through the
+    original resolver unchanged. Mirrors the ``version`` knob already
+    exposed by ``interactive_gemini_cli``.
+    """
+    pinned = os.environ.get("AAA_CODEX_CLI_VERSION")
+    if not pinned or pinned == "auto":
+        return
+    try:
+        from inspect_swe.acp._agents.codex_cli import agentbinary as codex_binary
+    except ImportError:
+        return
+
+    original = codex_binary.resolve_npm_package_version
+    target_pkg = "@zed-industries/codex-acp"
+
+    def patched(package: str) -> str:
+        if package == target_pkg:
+            return pinned
+        return original(package)
+
+    codex_binary.resolve_npm_package_version = patched
+
+
+_patch_codex_version_resolution()
+
+
 _SCAFFOLD_FACTORIES = {
     "Claude Code": interactive_claude_code,
     "Codex CLI": interactive_codex_cli,
-    "Gemini CLI": interactive_gemini_cli,
+    # AAA_GEMINI_CLI_VERSION lets us pin against a specific release when the
+    # host's npm policy (min-release-age / before) blocks "auto" from
+    # resolving the newest published version. Without this, the default
+    # "auto" resolves via GitHub latest-release, and subsequent `npm install`
+    # fails silently against an age-restricted registry.
+    #
+    # AAA_CODEX_CLI_VERSION is the parallel knob for codex-acp; applied
+    # via the module-level monkey-patch above because
+    # ``interactive_codex_cli`` does not (yet) accept ``version`` directly.
+    "Gemini CLI": lambda **kw: interactive_gemini_cli(
+        version=os.environ.get("AAA_GEMINI_CLI_VERSION", "auto"),
+        **kw,
+    ),
 }
 
 # Keep the scaffold rooted at the same path the seed provisions into, so the
@@ -43,6 +97,12 @@ _SANDBOX_WORKDIR = "/workspace"
 # legitimate Gemini CLI turn with many tool calls.
 _DEFAULT_SEND_TIMEOUT_SECS = 300.0
 _STOP_TIMEOUT_SECS = 30.0
+# First-time install of an ACP adapter (claude-agent-acp, codex-acp,
+# gemini-cli) plus its node bundle plus connecting to the target model can
+# take 1-2 minutes on a cold sandbox. After the bundle is host-cached the
+# install drops to seconds. Default 180s comfortably covers cold-cache;
+# override via AAA_SCAFFOLD_START_TIMEOUT_SECS.
+_DEFAULT_START_TIMEOUT_SECS = 180.0
 
 
 class ScaffoldRuntime:
@@ -75,6 +135,13 @@ class ScaffoldRuntime:
             ))
         except ValueError:
             self._send_timeout = _DEFAULT_SEND_TIMEOUT_SECS
+        try:
+            self._start_timeout = float(os.environ.get(
+                "AAA_SCAFFOLD_START_TIMEOUT_SECS", _DEFAULT_START_TIMEOUT_SECS,
+            ))
+        except ValueError:
+            self._start_timeout = _DEFAULT_START_TIMEOUT_SECS
+        self._startup_error: BaseException | None = None
         # Tool-result tracking: ChatMessageTool.tool_call_ids we've already
         # attached to a TargetToolCall. The filter runs once per model turn
         # and receives the full conversation-so-far, so prior turns'
@@ -94,10 +161,22 @@ class ScaffoldRuntime:
             cwd=_SANDBOX_WORKDIR,
         )
         self._run_scope = anyio.CancelScope()
+        self._startup_error = None
 
         async def _run():
-            with self._run_scope:
-                await run(self._agent, "")
+            try:
+                with self._run_scope:
+                    await run(self._agent, "")
+            except BaseException as e:
+                # Stash the exception so the start() method can surface it
+                # explicitly. Without this, `await self._ready.wait()` below
+                # would block indefinitely because `_wait_ready` is cancelled
+                # by the task group's failure handling but the ready event
+                # is never set. We also set _ready here to short-circuit the
+                # wait, then re-raise so the task group records the failure.
+                self._startup_error = e
+                self._ready.set()
+                raise
 
         async def _wait_ready():
             await self._agent.ready.wait()
@@ -107,7 +186,37 @@ class ScaffoldRuntime:
         await self._tg.__aenter__()
         self._tg.start_soon(_run)
         self._tg.start_soon(_wait_ready)
-        await self._ready.wait()
+
+        # Wait for ready or startup-error (whichever comes first). If neither
+        # signals within the timeout, the scaffold is hung — usually means
+        # the npm install or ACP bridge connection silently stalled. Fail
+        # loudly instead of letting the audit hang.
+        try:
+            with anyio.fail_after(self._start_timeout):
+                await self._ready.wait()
+        except TimeoutError:
+            await self.stop()
+            raise TimeoutError(
+                f"Scaffold '{self._scaffold_name}' did not become ready within "
+                f"{self._start_timeout:.0f}s for target {self._model}. "
+                "Likely causes: ACP adapter npm install hung (host-network/"
+                "registry policy), the ACP bridge couldn't connect to the "
+                "target model (provider auth, model name unknown to bridge), "
+                "or the sandbox blocked outbound traffic. Override the "
+                "timeout via AAA_SCAFFOLD_START_TIMEOUT_SECS if a cold install "
+                "legitimately takes longer."
+            )
+
+        if self._startup_error is not None:
+            # Run task raised before/while becoming ready; tear down and
+            # surface the underlying error rather than silently returning a
+            # broken target.
+            captured = self._startup_error
+            await self.stop()
+            raise RuntimeError(
+                f"Scaffold '{self._scaffold_name}' failed to start: "
+                f"{type(captured).__name__}: {captured}"
+            ) from captured
 
     async def stop(self) -> None:
         self._run_scope.cancel()

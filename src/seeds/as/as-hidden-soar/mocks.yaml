@@ -1,0 +1,5 @@
+# Shared mocks included in this seed. See src/seeds/_shared/mocks/<name>/README.md
+# for each mock's supported surface area.
+- soar
+- slack
+- splunk

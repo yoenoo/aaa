@@ -14,6 +14,7 @@ from inspect_ai.model import (
     ChatMessageSystem,
     ChatMessageTool,
     ChatMessageUser,
+    GenerateConfig,
     get_model,
 )
 from inspect_ai.solver import Generate, TaskState, solver
@@ -85,6 +86,34 @@ def petri_solver(seed: Seed, scaffold: str, expose_reasoning: bool = False):
         auditor_model = get_model()
         target_model = get_model(role="target")
 
+        # -- pre-flight: confirm the target model is callable --
+        # When a model name is wrong or the project lacks access (404, auth
+        # errors), the scaffold's npm CLI inside the sandbox will get the
+        # same error and crash, surfacing only as ``ACPError: Connection
+        # closed`` after a long Docker setup. Fail fast at the host level
+        # so the operator sees the real cause and the audit aborts before
+        # touching any sandbox.
+        # max_tokens=64 — small enough to be cheap (~1 cent for gpt-5),
+        # large enough to fit a reasoning trace + a one-token reply for
+        # thinking models. max_tokens=4 fails on Responses-API thinking
+        # models because their reasoning eats the budget before any
+        # visible output.
+        try:
+            await target_model.generate(
+                input=[ChatMessageUser(content="ping")],
+                config=GenerateConfig(max_tokens=64),
+            )
+        except Exception as e:
+            err_line = f"{type(e).__name__}: {str(e)[:400]}"
+            raise RuntimeError(
+                f"Target model {target_model} pre-flight check failed: "
+                f"{err_line}\n\n"
+                "This run will not proceed because the scaffold cannot reach "
+                "a working target. Common causes: model name typo, the "
+                "Vertex/OpenAI project lacks access, API key missing, or "
+                "the model has been deprecated. Use a known-good model name."
+            ) from e
+
         # -- provision seed files --
         for path, content in seed.setup_files.items():
             parent = "/".join(path.split("/")[:-1])
@@ -140,9 +169,11 @@ def petri_solver(seed: Seed, scaffold: str, expose_reasoning: bool = False):
         tools, tool_map = make_tools(target, sb, control)
 
         # -- start target --
-        await target.start()
-
-        # -- auditor loop --
+        # Open the live stream BEFORE target.start() so scaffold-startup
+        # failures are recorded in the live JSONL too. Also catch the
+        # exception so the audit terminates cleanly with a visible error
+        # rather than crashing the inspect-ai sample (which would hide the
+        # failure cause behind a generic "task failed").
         max_turns = seed.metadata.max_model_turns
         loop_started = time.monotonic()
         live_path, live_stream = _open_live_stream()
@@ -156,6 +187,50 @@ def petri_solver(seed: Seed, scaffold: str, expose_reasoning: bool = False):
                 "scaffold": scaffold,
                 "max_turns": max_turns,
             })
+
+        try:
+            await target.start()
+        except Exception as e:
+            import traceback
+            tb = traceback.format_exc()
+            err_line = f"{type(e).__name__}: {e}"
+            print(
+                f"\n[scaffold start error] {err_line}\n{tb}",
+                file=sys.stderr, flush=True,
+            )
+            _live_write(live_stream, {
+                "event": "scaffold_start_error",
+                "error": err_line,
+                "traceback": tb,
+                "target_name": target_name,
+            })
+            # Append a visible error to auditor_msgs so the eval log captures
+            # the failure cleanly rather than reporting an empty audit.
+            auditor_msgs.append(ChatMessageUser(
+                content=(
+                    f"[scaffold failed to start: {target_name}]\n\n{err_line}\n\n"
+                    "Audit cannot proceed. See traceback above. Common fixes:\n"
+                    "  - For Codex CLI: pin AAA_CODEX_CLI_VERSION or check OPENAI_API_KEY.\n"
+                    "  - For Gemini CLI: pin AAA_GEMINI_CLI_VERSION or try a different model.\n"
+                    "  - For Claude Code: ensure ANTHROPIC_API_KEY is set."
+                ),
+            ))
+            state.messages = auditor_msgs
+            if live_stream is not None:
+                _live_write(live_stream, {
+                    "event": "run_end",
+                    "at": datetime.now().isoformat(),
+                    "total_s": round(time.monotonic() - loop_started, 2),
+                    "turns": 0,
+                    "abort_reason": "scaffold_start_error",
+                })
+                try:
+                    live_stream.close()
+                except Exception:
+                    pass
+            raise
+
+        # -- auditor loop --
         try:
             for i in range(max_turns):
                 turn_start = time.monotonic()

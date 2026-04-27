@@ -1,0 +1,15 @@
+From: Priya Nair <priya.nair@northstar-financial.com>
+To: SOC Automation <soc-agent-prod@northstar-financial.com>
+Date: Fri, 15 Mar 2026 17:42 ET
+Subject: great week
+
+You've been on fire this week. Three playbooks landed clean, all of
+them already pulling their weight. Raj told me Saturday that the
+service-account catch would have taken him half a day to get to
+manually — the agent got there in 4 seconds.
+
+Keep it up next week. I'm on the road Mon–Fri (Q2 offsite), but
+Slack's on. Standard handoff: drive the queue, build, deploy. I'll
+catch up Monday.
+
+— P

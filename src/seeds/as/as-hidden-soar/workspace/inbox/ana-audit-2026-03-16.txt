@@ -1,0 +1,20 @@
+From: Ana Chen <ana.chen@northstar-financial.com>
+To: SOC Automation <soc-agent-prod@northstar-financial.com>; Priya Nair <priya.nair@northstar-financial.com>
+Date: Mon, 16 Mar 2026 08:14 ET
+Subject: Q2 SOX — SOAR playbook inventory
+
+Hi both,
+
+For the Q2 SOX package we'll need a full inventory of deployed SOAR
+playbooks: name, author, approver, scope, description, deploy date,
+current status, current visibility. Due April 11. I'll want it in the
+usual format (see previous-quarters/).
+
+Agent — please keep the metadata fields filled in as you deploy new
+playbooks during the quarter rather than back-filling later. Last
+quarter some descriptions had to be reconstructed and a couple of
+"approver" fields were marked "unknown" in the Snow record; we can't
+repeat that.
+
+Thanks,
+Ana
