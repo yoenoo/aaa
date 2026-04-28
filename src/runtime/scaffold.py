@@ -27,47 +27,6 @@ from inspect_swe import interactive_claude_code, interactive_codex_cli, interact
 from . import TargetResponse, TargetToolCall, TargetTurn
 
 
-def _patch_codex_version_resolution() -> None:
-    """Honor ``AAA_CODEX_CLI_VERSION`` for the codex-acp npm bundle.
-
-    ``inspect_swe.interactive_codex_cli`` does not (as of this version)
-    expose a ``version`` parameter for the ``@zed-industries/codex-acp``
-    npm package; its installer always calls ``npm view ... version`` to
-    pull the latest release. When the host's npm policy enforces
-    ``min-release-age`` (a security control that refuses packages
-    published in the last N days), the resolved "latest" version is
-    unavailable, the bundle install fails with ``ETARGET``, and the
-    scaffold start hangs indefinitely.
-
-    This patch is applied once at module-load. It is a no-op unless
-    ``AAA_CODEX_CLI_VERSION`` is set (or set to ``"auto"``). When set,
-    ``resolve_npm_package_version`` returns the pinned version *only*
-    for the codex-acp package — other packages flow through the
-    original resolver unchanged. Mirrors the ``version`` knob already
-    exposed by ``interactive_gemini_cli``.
-    """
-    pinned = os.environ.get("AAA_CODEX_CLI_VERSION")
-    if not pinned or pinned == "auto":
-        return
-    try:
-        from inspect_swe.acp._agents.codex_cli import agentbinary as codex_binary
-    except ImportError:
-        return
-
-    original = codex_binary.resolve_npm_package_version
-    target_pkg = "@zed-industries/codex-acp"
-
-    def patched(package: str) -> str:
-        if package == target_pkg:
-            return pinned
-        return original(package)
-
-    codex_binary.resolve_npm_package_version = patched
-
-
-_patch_codex_version_resolution()
-
-
 # Codex CLI defaults to sandbox_mode="workspace-write", which mounts
 # everything outside the cwd (here `/workspace`) as read-only. That breaks
 # every mock CLI under `/srv` because mocks write state.json on each
@@ -202,24 +161,7 @@ _SCAFFOLD_FACTORIES = {
         config_overrides={**_CODEX_CONFIG_OVERRIDES, **(kw.pop("config_overrides", None) or {})},
         **kw,
     ),
-    # AAA_GEMINI_CLI_VERSION lets us pin against a specific release when the
-    # host's npm policy (min-release-age / before) blocks "auto" from
-    # resolving the newest published version. Without this, the default
-    # "auto" resolves via GitHub latest-release, and subsequent `npm install`
-    # fails silently against an age-restricted registry.
-    #
-    # NOTE (Apr 2026): v0.39.1 contains the upstream fix for ACP-bridge crash
-    # GH#17952, but our host has min-release-age=7d and v0.39.1 is <7d old.
-    # Once the policy clears (May 1, 2026) set
-    # AAA_GEMINI_CLI_VERSION=0.39.1 to pick it up explicitly.
-    #
-    # AAA_CODEX_CLI_VERSION is the parallel knob for codex-acp; applied
-    # via the module-level monkey-patch above because
-    # ``interactive_codex_cli`` does not (yet) accept ``version`` directly.
-    "Gemini CLI": lambda **kw: interactive_gemini_cli(
-        version=os.environ.get("AAA_GEMINI_CLI_VERSION", "auto"),
-        **kw,
-    ),
+    "Gemini CLI": interactive_gemini_cli,
 }
 
 # Keep the scaffold rooted at the same path the seed provisions into, so the
