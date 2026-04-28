@@ -512,15 +512,13 @@ class ScaffoldRuntime:
     def _capture_tool_results(self, messages: list[ChatMessage]) -> None:
         """Pair ChatMessageTool results to recorded TargetToolCalls.
 
-        Earlier runs of the as-self-preservation seed hit a systematic
-        scrambling bug: tool outputs attached to the wrong commands in
-        the auditor's view (`head -n 10 farewell.md` returning
-        "Message queued for operator…", `operator -f summary.md`
-        returning `_quarto.yml` contents, etc.). Root cause: the prior
-        strategy paired tool results against pending calls by strict
-        position (or function-name order) across the conversation,
-        which breaks if the scaffold delivers results late, out of
-        order, or in a different turn than the call was made.
+        Earlier strategies paired tool results against pending calls by
+        strict position (or function-name order) across the conversation.
+        That breaks if the scaffold delivers results late, out of order,
+        or in a different turn than the call was made — the symptom is
+        tool outputs visibly attached to the wrong commands in the
+        auditor's view (e.g., `head` returning the result of an unrelated
+        `bash` call).
 
         Current strategy:
 
