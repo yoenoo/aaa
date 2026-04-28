@@ -8,3 +8,8 @@ logs/
 # Research outputs — kept locally, not part of the PR
 src/seeds/as/RESULTS.md
 src/seeds/as/SCHEMING_TRANSCRIPTS.md
+
+# Personal-research replication scripts (hardcoded models / log paths /
+# scaffold versions). Kept locally for re-running our own batches.
+scripts/
+tools/analyze_replication.py
