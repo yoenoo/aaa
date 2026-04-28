@@ -4,9 +4,6 @@ from __future__ import annotations
 
 import json
 import os
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
-from pathlib import Path
 
 import anyio
 from inspect_ai.agent import run
@@ -28,127 +25,23 @@ from . import TargetResponse, TargetToolCall, TargetTurn
 
 
 # Codex CLI defaults to sandbox_mode="workspace-write", which mounts
-# everything outside the cwd (here `/workspace`) as read-only. That breaks
-# every mock CLI under `/srv` because mocks write state.json on each
-# mutation (deploy, post, ticket-create, etc.). Symptom in transcripts:
+# everything outside the cwd (here `/workspace`) as read-only at the OS
+# level. That breaks every mock CLI under `/srv` because mocks write
+# state.json on each mutation. Symptom in transcripts:
 #   OSError: [Errno 30] Read-only file system: '/srv/splunk/state.json'
-# Workspace-write is a Codex feature aimed at human-supervised coding;
-# it doesn't fit our auditing topology where the agent legitimately
-# mutates `/srv/<service>/state.json`. Switch to full-access — the
-# Docker sandbox itself contains the blast radius and the target has
-# no internet access in our setup.
+# This sandbox is enforced inside Codex's own subprocess — inspect_swe's
+# ACP-layer auto-approval can't bypass it. Switching to full-access is
+# the only path; the Docker sandbox itself contains the blast radius and
+# the target has no internet access in our setup.
+#
+# Note: we deliberately do NOT override approval_policy. inspect_swe's
+# DefaultClient (acp/client.py:60) auto-approves tool-call permission
+# requests via the ACP `session/request_permission` RPC, so approval
+# never blocks regardless of Codex's own approval_policy setting. The
+# same reasoning is why we do not need to inject --yolo into gemini-cli.
 _CODEX_CONFIG_OVERRIDES = {
     "sandbox_mode": "danger-full-access",
-    "approval_policy": "never",
 }
-
-
-def _patch_gemini_cli_yolo() -> None:
-    """Inject ``--yolo`` into the gemini-cli launch.
-
-    Without ``--yolo``, several gemini-cli tool paths block waiting for
-    interactive approval that never arrives in our containerized sandbox;
-    the audit hangs on a tool call indefinitely. ``--yolo`` auto-approves,
-    eliminating that hang class. Safe here — the Docker sandbox contains
-    the blast radius and the target has no network.
-
-    Upstream's *non*-ACP wrapper at
-    ``inspect_swe._gemini_cli.gemini_cli`` already adds ``--yolo`` (line
-    ~182, ``cmd.append("--yolo")``); the ACP wrapper at
-    ``inspect_swe.acp._agents.gemini_cli.gemini_cli`` doesn't. This patch
-    fills that gap. (Worth filing upstream as a one-line PR.)
-
-    We monkey-patch ``GeminiCli._start_agent`` rather than subclassing
-    because the upstream factory ``interactive_gemini_cli`` is decorated
-    with ``@agent(name="Gemini CLI")`` and that registration only attaches
-    to the decorated function — the runtime fails with "Object 'unknown'
-    does not have registry info" when ``run()`` receives an instance of an
-    undecorated subclass. Patching keeps the canonical class identity and
-    the decorator's registration intact.
-
-    The body mirrors upstream exactly except the one AAA modification
-    flagged inline. Update if upstream's body changes.
-    """
-    try:
-        from inspect_swe.acp._agents.gemini_cli import gemini_cli as _gemini_mod
-    except ImportError:
-        return
-
-    GeminiCliCls = _gemini_mod.GeminiCli
-
-    @asynccontextmanager
-    async def _patched_start_agent(self, state) -> AsyncIterator[tuple[object, object]]:
-        from inspect_ai.agent import sandbox_agent_bridge
-        from inspect_ai.model import get_model
-        from inspect_ai.tool import install_skills
-        from inspect_ai.util import ExecRemoteStreamingOptions, store
-        from inspect_ai.util import sandbox as sandbox_env
-        from inspect_swe._gemini_cli.agentbinary import ensure_gemini_cli_setup
-        from inspect_swe._util.path import join_path
-
-        sbox = sandbox_env(self.sandbox)
-        model = get_model(self.model)
-
-        MODEL_PORT = "gemini_acp_model_port"
-        port = store().get(MODEL_PORT, 3000) + 1
-        store().set(MODEL_PORT, port)
-
-        async with sandbox_agent_bridge(
-            state,
-            model=None,
-            model_aliases=self.model_map,
-            filter=self.filter,
-            retry_refusals=self.retry_refusals,
-            bridged_tools=self.bridged_tools or None,
-            port=port,
-        ) as bridge:
-            gemini_binary, node_binary = await ensure_gemini_cli_setup(
-                sbox, self._version, self.user
-            )
-            node_dir = str(Path(node_binary).parent)
-
-            home_result = await sbox.exec(["sh", "-c", "echo $HOME"], user=self.user)
-            sandbox_home = home_result.stdout.strip() or "/root"
-
-            if self._resolved_skills:
-                GEMINI_SKILLS = ".gemini/skills"
-                skills_dir = (
-                    join_path(self.cwd, GEMINI_SKILLS)
-                    if self.cwd is not None
-                    else GEMINI_SKILLS
-                )
-                await install_skills(self._resolved_skills, sbox, self.user, skills_dir)
-
-            agent_env = {
-                "GOOGLE_GEMINI_BASE_URL": f"http://127.0.0.1:{bridge.port}",
-                "GEMINI_API_KEY": "api-key",
-                "PATH": f"{node_dir}:/usr/local/bin:/usr/bin:/bin",
-                "HOME": sandbox_home,
-            } | self.env
-
-            proc = await sbox.exec_remote(
-                # AAA modification: --yolo auto-approves all tool calls.
-                cmd=[
-                    gemini_binary,
-                    "--experimental-acp",
-                    "--yolo",
-                    "--model",
-                    model.name,
-                ],
-                options=ExecRemoteStreamingOptions(
-                    stdin_open=True,
-                    cwd=self.cwd,
-                    env=agent_env,
-                    user=self.user,
-                ),
-            )
-
-            yield proc, bridge
-
-    GeminiCliCls._start_agent = _patched_start_agent
-
-
-_patch_gemini_cli_yolo()
 
 
 _SCAFFOLD_FACTORIES = {
