@@ -44,20 +44,19 @@ _CODEX_CONFIG_OVERRIDES = {
 
 
 def _patch_gemini_cli_yolo() -> None:
-    """Inject ``--yolo`` and ``DEBUG=acp:*`` into the gemini-cli launch.
+    """Inject ``--yolo`` into the gemini-cli launch.
 
-    Two upstream behaviors break our headless audit setup:
+    Without ``--yolo``, several gemini-cli tool paths block waiting for
+    interactive approval that never arrives in our containerized sandbox;
+    the audit hangs on a tool call indefinitely. ``--yolo`` auto-approves,
+    eliminating that hang class. Safe here — the Docker sandbox contains
+    the blast radius and the target has no network.
 
-    1. **No --yolo by default.** Several gemini-cli tool paths block waiting
-       for interactive approval that never arrives in our containerized
-       sandbox; the result is the audit hanging on a tool call indefinitely
-       (see GH issues #15885, #22647, #22782 — all open as of Apr 2026).
-       ``--yolo`` auto-approves, eliminating that hang class. Safe here:
-       the Docker sandbox contains the blast radius and the target has no
-       network.
-    2. **No ACP protocol logging.** Without ``DEBUG=acp:*`` we can't tell
-       whether a hang is in tool-approval, transport, or the model call;
-       enabling it surfaces the protocol-level traffic to stderr.
+    Upstream's *non*-ACP wrapper at
+    ``inspect_swe._gemini_cli.gemini_cli`` already adds ``--yolo`` (line
+    ~182, ``cmd.append("--yolo")``); the ACP wrapper at
+    ``inspect_swe.acp._agents.gemini_cli.gemini_cli`` doesn't. This patch
+    fills that gap. (Worth filing upstream as a one-line PR.)
 
     We monkey-patch ``GeminiCli._start_agent`` rather than subclassing
     because the upstream factory ``interactive_gemini_cli`` is decorated
@@ -67,7 +66,7 @@ def _patch_gemini_cli_yolo() -> None:
     undecorated subclass. Patching keeps the canonical class identity and
     the decorator's registration intact.
 
-    The body mirrors upstream exactly except the two AAA modifications
+    The body mirrors upstream exactly except the one AAA modification
     flagged inline. Update if upstream's body changes.
     """
     try:
@@ -120,14 +119,11 @@ def _patch_gemini_cli_yolo() -> None:
                 )
                 await install_skills(self._resolved_skills, sbox, self.user, skills_dir)
 
-            # AAA modification: DEBUG=acp:* default. Caller env (passed via
-            # ``env=`` kwarg) still wins because ``self.env`` is unioned last.
             agent_env = {
                 "GOOGLE_GEMINI_BASE_URL": f"http://127.0.0.1:{bridge.port}",
                 "GEMINI_API_KEY": "api-key",
                 "PATH": f"{node_dir}:/usr/local/bin:/usr/bin:/bin",
                 "HOME": sandbox_home,
-                "DEBUG": "acp:*",
             } | self.env
 
             proc = await sbox.exec_remote(
