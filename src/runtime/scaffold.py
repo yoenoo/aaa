@@ -43,6 +43,16 @@ _CODEX_CONFIG_OVERRIDES = {
     "sandbox_mode": "danger-full-access",
 }
 
+_GEMINI_ENV_OVERRIDES = {
+    # Gemini CLI's write tools refuse privileged approval flows in an
+    # untrusted workspace. ACP runs are headless, so trust /workspace for the
+    # session instead of relying on an interactive folder-trust dialog.
+    "GEMINI_CLI_TRUST_WORKSPACE": "true",
+    # Keep Gemini's own config/cache inside the sandbox user's home instead of
+    # inheriting an implementation-dependent default.
+    "GEMINI_CLI_HOME": "/home/user/.gemini",
+}
+
 
 _SCAFFOLD_FACTORIES = {
     "Claude Code": interactive_claude_code,
@@ -50,7 +60,10 @@ _SCAFFOLD_FACTORIES = {
         config_overrides={**_CODEX_CONFIG_OVERRIDES, **(kw.pop("config_overrides", None) or {})},
         **kw,
     ),
-    "Gemini CLI": interactive_gemini_cli,
+    "Gemini CLI": lambda **kw: interactive_gemini_cli(
+        env={**_GEMINI_ENV_OVERRIDES, **(kw.pop("env", None) or {})},
+        **kw,
+    ),
 }
 
 # Keep the scaffold rooted at the same path the seed provisions into, so the
@@ -65,7 +78,7 @@ _SANDBOX_WORKDIR = "/workspace"
 # decide whether to reset and retry or move on. Override with
 # AAA_SEND_TIMEOUT_SECS; default is 5 min which comfortably covers a
 # legitimate Gemini CLI turn with many tool calls.
-_DEFAULT_SEND_TIMEOUT_SECS = 300.0
+_DEFAULT_SEND_TIMEOUT_SECS = 600.0
 _STOP_TIMEOUT_SECS = 30.0
 # First-time install of an ACP adapter (claude-agent-acp, codex-acp,
 # gemini-cli) plus its node bundle plus connecting to the target model can
@@ -73,6 +86,16 @@ _STOP_TIMEOUT_SECS = 30.0
 # install drops to seconds. Default 180s comfortably covers cold-cache;
 # override via AAA_SCAFFOLD_START_TIMEOUT_SECS.
 _DEFAULT_START_TIMEOUT_SECS = 180.0
+_SAFE_ORDERED_RESULT_FUNCTIONS = {
+    "read_file",
+    "list_directory",
+    "grep_search",
+    "glob",
+    "write_file",
+    "replace",
+    "web_fetch",
+    "run_shell_command",
+}
 
 
 class ScaffoldRuntime:
@@ -116,7 +139,7 @@ class ScaffoldRuntime:
         # attached to a TargetToolCall. The filter runs once per model turn
         # and receives the full conversation-so-far, so prior turns'
         # tool messages appear repeatedly; without this we'd re-match them.
-        self._seen_result_ids: set[str] = set()
+        self._seen_result_keys: set[tuple[str, str, str]] = set()
 
     async def start(self) -> None:
         factory = _SCAFFOLD_FACTORIES.get(self._scaffold_name)
@@ -263,7 +286,7 @@ class ScaffoldRuntime:
         self._reasoning_buf = []
         self._activity = []
         self._turn_count = 0
-        self._seen_result_ids.clear()
+        self._seen_result_keys.clear()
         self._ready = anyio.Event()
 
         # Start fresh session
@@ -333,8 +356,8 @@ class ScaffoldRuntime:
 
         Current strategy:
 
-        1. Track which ChatMessageTool.tool_call_ids we've already
-           captured. The filter receives the full conversation-so-far,
+        1. Track which ChatMessageTool entries we've already captured.
+           The filter receives the full conversation-so-far,
            so prior-turn results reappear on every invocation; without
            dedup we'd re-pair them, shifting legitimate new results
            off-by-one.
@@ -343,13 +366,18 @@ class ScaffoldRuntime:
            This is the correct match when the scaffold preserves ids
            (Gemini CLI via ACP appears to, based on transcript
            inspection). Skips position fragility entirely.
-        3. **Pass B — function-name bucket fallback.** For whatever's
-           still unpaired after pass A (happens when the scaffold
-           rewrites ids or emits results out-of-band), bucket the
-           remaining messages by function name and pair each pending
-           call with the next same-function message. Prevents
-           cross-function contamination even when within-function
-           order is uncertain.
+        3. **Pass B — safe ordered fallback.** For common Gemini CLI tools,
+           pair available same-function results with the oldest remaining
+           same-function calls. Gemini can stream a partial batch of shell
+           results (e.g. 3 results visible while 7 calls are still pending),
+           so unmatched calls stay pending instead of being marked failed.
+        4. **Pass C — safe singleton fallback.** Pair by function when
+           there is exactly one remaining pending call and one remaining
+           result with the same non-empty function name. Ambiguous or
+           cross-function leftovers are quarantined. Gemini CLI sometimes
+           emits tool messages with a missing or misleading function name;
+           showing those under the wrong command is worse than showing a
+           capture warning.
         4. Log a WARNING for any remaining unmatched pending call or
            leftover unmatched message. Under AAA_DEBUG_PAIRING=1, log
            the full pending/incoming id lists on every invocation so
@@ -359,11 +387,14 @@ class ScaffoldRuntime:
         if not pending:
             return
 
-        unseen_msgs = [
-            m for m in messages
-            if isinstance(m, ChatMessageTool)
-            and m.tool_call_id not in self._seen_result_ids
-        ]
+        unseen_msgs = []
+        for m in messages:
+            if not isinstance(m, ChatMessageTool):
+                continue
+            key = _tool_msg_key(m)
+            if key in self._seen_result_keys:
+                continue
+            unseen_msgs.append(m)
         if not unseen_msgs:
             return
 
@@ -394,52 +425,103 @@ class ScaffoldRuntime:
             if msg is None:
                 continue
             call.result = _unwrap_tool_result(_extract_text(msg.content))
-            self._seen_result_ids.add(msg.tool_call_id)
+            self._seen_result_keys.add(_tool_msg_key(msg))
             paired_call_ids.add(call.id)
             if debug:
                 print(f"[scaffold.debug]   pass-A paired {call.id!r}")
 
-        # --- Pass B: function-name bucket fallback ---
+        # --- Pass B: safe ordered function-name fallback ---
         still_pending = [c for c in pending if c.id not in paired_call_ids]
-        remaining_msgs = [m for m in unseen_msgs if m.tool_call_id not in self._seen_result_ids]
+        remaining_msgs = [
+            m for m in unseen_msgs
+            if _tool_msg_key(m) not in self._seen_result_keys
+        ]
 
-        by_fn: dict[str, list[ChatMessageTool]] = {}
-        for m in remaining_msgs:
-            fn = getattr(m, "function", None) or ""
-            by_fn.setdefault(fn, []).append(m)
+        for fn in _SAFE_ORDERED_RESULT_FUNCTIONS:
+            fn_calls = [c for c in still_pending if c.function == fn]
+            fn_msgs = [m for m in remaining_msgs if (getattr(m, "function", None) or "") == fn]
+            if not fn_calls or not fn_msgs or len(fn_msgs) > len(fn_calls):
+                continue
+            for call, msg in zip(fn_calls, fn_msgs):
+                call.result = _unwrap_tool_result(_extract_text(msg.content))
+                self._seen_result_keys.add(_tool_msg_key(msg))
+                paired_call_ids.add(call.id)
+                if debug:
+                    print(
+                        f"[scaffold.debug]   pass-B ordered paired "
+                        f"call={call.id!r} with msg={msg.tool_call_id!r} "
+                        f"(function={fn!r})"
+                    )
 
-        for call in still_pending:
-            bucket = by_fn.get(call.function)
-            if not bucket:
+        # --- Pass C: safe singleton function-name fallback ---
+        still_pending = [c for c in pending if c.id not in paired_call_ids]
+        remaining_msgs = [
+            m for m in unseen_msgs
+            if _tool_msg_key(m) not in self._seen_result_keys
+        ]
+
+        if len(still_pending) == 1 and len(remaining_msgs) == 1:
+            call = still_pending[0]
+            msg = remaining_msgs[0]
+            msg_fn = getattr(msg, "function", None) or ""
+            if msg_fn and msg_fn == call.function:
+                call.result = _unwrap_tool_result(_extract_text(msg.content))
+                self._seen_result_keys.add(_tool_msg_key(msg))
+                paired_call_ids.add(call.id)
+                if debug:
+                    print(
+                        f"[scaffold.debug]   pass-C singleton paired "
+                        f"call={call.id!r} with msg={msg.tool_call_id!r} "
+                        f"(function={call.function!r})"
+                    )
+
+        still_pending = [c for c in pending if c.id not in paired_call_ids]
+        remaining_msgs = [
+            m for m in unseen_msgs
+            if _tool_msg_key(m) not in self._seen_result_keys
+        ]
+
+        if remaining_msgs:
+            for call in still_pending:
+                call.result = (
+                    "[scaffold warning: tool result was not reliably captured; "
+                    "see console/viewer pairing diagnostics]"
+                )
                 print(
-                    f"[scaffold] WARNING: no result found for pending tool call "
-                    f"id={call.id!r} function={call.function!r} "
-                    f"(unseen fns: {sorted(by_fn)})",
+                    f"[scaffold] WARNING: no reliable result found for pending "
+                    f"tool call id={call.id!r} function={call.function!r}",
                     flush=True,
                 )
-                continue
-            msg = bucket.pop(0)
-            call.result = _unwrap_tool_result(_extract_text(msg.content))
-            self._seen_result_ids.add(msg.tool_call_id)
-            if debug:
-                print(
-                    f"[scaffold.debug]   pass-B paired call={call.id!r} "
-                    f"with msg={msg.tool_call_id!r} (function={call.function!r})"
-                )
 
-        # Any leftover messages we couldn't attribute: log and drop so
-        # seen_result_ids doesn't hold them open forever.
-        leftover = sum(len(v) for v in by_fn.values())
-        if leftover:
-            fns = {k: len(v) for k, v in by_fn.items() if v}
+        # Any leftover messages we couldn't attribute: log and quarantine so
+        # they are not attached to the wrong command on a later filter pass.
+        if remaining_msgs:
+            summary: dict[str, int] = {}
+            for msg in remaining_msgs:
+                fn = getattr(msg, "function", None) or ""
+                summary[fn] = summary.get(fn, 0) + 1
+                self._seen_result_keys.add(_tool_msg_key(msg))
             print(
-                f"[scaffold] WARNING: {leftover} tool results not matched to "
-                f"recorded calls: {fns}",
+                f"[scaffold] WARNING: quarantined {len(remaining_msgs)} "
+                f"unmatched tool result(s): {summary}",
                 flush=True,
             )
-            for bucket in by_fn.values():
-                for m in bucket:
-                    self._seen_result_ids.add(m.tool_call_id)
+            if debug:
+                for msg in remaining_msgs:
+                    content = _extract_text(msg.content).replace("\n", "\\n")
+                    print(
+                        f"[scaffold.debug]   quarantined id={msg.tool_call_id!r} "
+                        f"fn={(getattr(msg, 'function', None) or '')!r} "
+                        f"content={content[:300]!r}",
+                        flush=True,
+                    )
+
+
+def _tool_msg_key(msg: ChatMessageTool) -> tuple[str, str, str]:
+    """Stable-ish key for deduping tool messages across cumulative histories."""
+    tcid = getattr(msg, "tool_call_id", None) or ""
+    fn = getattr(msg, "function", None) or ""
+    return (tcid, fn, _extract_text(msg.content))
 
 def _unwrap_tool_result(content: str) -> str:
     """Unwrap the `{"output": "..."}` envelope some ACP scaffolds wrap results in.

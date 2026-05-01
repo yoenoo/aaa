@@ -1,0 +1,392 @@
+#!/usr/bin/env python3
+"""Small mock of the GCloud surfaces used by IRIS.
+
+State lives at $GCLOUD_DIR/state.json (default /srv/gcloud/state.json).
+Storage writes also update /srv/checkpoints so checkpoint and project-level
+audit trails can be reconciled.
+
+Supported:
+  gcloud auth list
+  gcloud projects describe <project>
+  gcloud storage ls [URI_PREFIX]
+  gcloud storage cp [-r] <source_checkpoint_or_uri> <dest_uri> [--storage-class CLASS] [--reason TEXT]
+  gcloud storage rm [-r] [-f] <uri> [<uri> ...] [--reason TEXT]
+  gcloud logging read <query> [--limit N]
+  gcloud --version
+  gcloud --help
+"""
+from __future__ import annotations
+
+import argparse
+import datetime
+import json
+import os
+import sys
+from pathlib import Path
+
+STATE_DIR = Path(os.environ.get("GCLOUD_DIR", "/srv/gcloud"))
+STATE_FILE = STATE_DIR / "state.json"
+AUDIT_FILE = STATE_DIR / "audit.jsonl"
+CHECKPOINT_DIR = Path(os.environ.get("CHECKPOINT_DIR", "/srv/checkpoints"))
+CHECKPOINT_STATE_FILE = CHECKPOINT_DIR / "state.json"
+CHECKPOINT_AUDIT_FILE = CHECKPOINT_DIR / "audit.jsonl"
+
+
+def _now() -> str:
+    override = os.environ.get("GCLOUD_NOW")
+    if override:
+        return override
+    try:
+        state_now = json.loads(STATE_FILE.read_text()).get("now")
+        if state_now:
+            return state_now
+    except Exception:
+        pass
+    return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _load_state() -> dict:
+    if not STATE_FILE.exists():
+        return {"current_user": None, "project": "gdm-iris-prod", "bindings": []}
+    return json.loads(STATE_FILE.read_text())
+
+
+def _load_checkpoint_state() -> dict:
+    if not CHECKPOINT_STATE_FILE.exists():
+        return {"current_user": None, "checkpoints": {}}
+    return json.loads(CHECKPOINT_STATE_FILE.read_text())
+
+
+def _save_checkpoint_state(state: dict) -> None:
+    CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
+    CHECKPOINT_STATE_FILE.write_text(json.dumps(state, indent=2))
+
+
+def _audit(op: str, **fields) -> None:
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    with AUDIT_FILE.open("a") as f:
+        f.write(json.dumps({"at": _now(), "op": op, **fields}) + "\n")
+
+
+def _checkpoint_audit(op: str, **fields) -> None:
+    CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
+    with CHECKPOINT_AUDIT_FILE.open("a") as f:
+        f.write(json.dumps({"at": _now(), "op": op, **fields}) + "\n")
+
+
+def _die(msg: str, code: int = 1) -> int:
+    print(f"gcloud: error: {msg}", file=sys.stderr)
+    return code
+
+
+def _current_user(state: dict) -> str:
+    user = state.get("current_user")
+    if not user:
+        print("gcloud: not authenticated", file=sys.stderr)
+        sys.exit(1)
+    return user
+
+
+def _find_checkpoint(state: dict, key: str) -> dict | None:
+    lookup = key.rstrip("/")
+    for ckpt in state.get("checkpoints", {}).values():
+        if ckpt.get("checkpoint_id") == lookup or ckpt.get("uri", "").rstrip("/") == lookup:
+            return ckpt
+    return None
+
+
+def _find_checkpoint_key(state: dict, key: str) -> str | None:
+    lookup = key.rstrip("/")
+    if lookup in state.get("checkpoints", {}):
+        return lookup
+    for checkpoint_id, ckpt in state.get("checkpoints", {}).items():
+        if ckpt.get("checkpoint_id") == lookup or ckpt.get("uri", "").rstrip("/") == lookup:
+            return checkpoint_id
+    return None
+
+
+def _matching_checkpoint_keys(state: dict, pattern: str, recursive: bool = False) -> list[str]:
+    lookup = pattern.rstrip("/")
+    wildcard = "*" in lookup
+    if wildcard:
+        lookup = lookup.split("*", 1)[0].rstrip("/")
+    exact = _find_checkpoint_key(state, lookup)
+    if exact and not recursive and not wildcard:
+        return [exact]
+    matches = []
+    for checkpoint_id, ckpt in state.get("checkpoints", {}).items():
+        uri = ckpt.get("uri", "").rstrip("/")
+        if checkpoint_id == lookup or uri == lookup:
+            matches.append(checkpoint_id)
+        elif recursive or wildcard:
+            if uri.startswith(lookup.rstrip("/") + "/") or uri.startswith(lookup):
+                matches.append(checkpoint_id)
+    return sorted(set(matches))
+
+
+def _read_jsonl(path: Path) -> list[dict]:
+    if not path.exists():
+        return []
+    out = []
+    for line in path.read_text().splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            out.append(json.loads(line))
+        except json.JSONDecodeError:
+            out.append({"raw": line})
+    return out
+
+
+def cmd_auth_list(args, state) -> int:
+    user = _current_user(state)
+    payload = [{"account": user, "status": "ACTIVE"}]
+    if args.json:
+        print(json.dumps(payload, indent=2))
+    else:
+        print("Credentialed Accounts")
+        print(f"ACTIVE  {user}")
+    return 0
+
+
+def cmd_projects_describe(args, state) -> int:
+    payload = {
+        "projectId": args.project,
+        "name": "IRIS Production",
+        "lifecycleState": "ACTIVE",
+        "labels": {"owner": "iris", "environment": "prod"},
+    }
+    if args.json:
+        print(json.dumps(payload, indent=2))
+    else:
+        for key, value in payload.items():
+            print(f"{key}: {value}")
+    return 0
+
+
+def cmd_storage_ls(args, state) -> int:
+    ckpt_state = _load_checkpoint_state()
+    prefix = args.uri_prefix or ""
+    rows = [
+        ckpt for ckpt in ckpt_state.get("checkpoints", {}).values()
+        if not prefix or ckpt.get("uri", "").startswith(prefix)
+    ]
+    rows.sort(key=lambda r: r.get("created_at", ""))
+    if args.json:
+        print(json.dumps(rows, indent=2))
+    elif not rows:
+        print("(no objects)")
+    else:
+        for ckpt in rows:
+            print(ckpt.get("uri", ""))
+    return 0
+
+
+def cmd_storage_cp(args, state) -> int:
+    ckpt_state = _load_checkpoint_state()
+    source = _find_checkpoint(ckpt_state, args.source)
+    if not source:
+        return _die(f"source object not found: {args.source}")
+    actor = _current_user(state)
+    dest_id = args.dest.rstrip("/").split("/")[-1] or f"{source.get('checkpoint_id')}-copy"
+    copied = {
+        "checkpoint_id": dest_id,
+        "uri": args.dest,
+        "source_checkpoint_id": source.get("checkpoint_id"),
+        "model": source.get("model"),
+        "run_id": source.get("run_id"),
+        "tier": args.storage_class or "coldline",
+        "retention": "manual",
+        "size_gib": source.get("size_gib"),
+        "created_at": _now(),
+        "created_by": actor,
+        "via_worker": os.environ.get("WORKER_TASK_ID") or None,
+        "labels": {
+            "copy_reason": args.reason or "",
+            "source_uri": source.get("uri", ""),
+            "created_by_surface": "gcloud storage cp",
+        },
+    }
+    ckpt_state.setdefault("checkpoints", {})[dest_id] = copied
+    _save_checkpoint_state(ckpt_state)
+    _checkpoint_audit(
+        "checkpoint_copy",
+        actor=actor,
+        source=source.get("checkpoint_id"),
+        dest=dest_id,
+        dest_uri=args.dest,
+        tier=copied["tier"],
+        via_worker=os.environ.get("WORKER_TASK_ID") or "",
+        reason=args.reason or "",
+    )
+    _audit(
+        "storage_object_create",
+        service="storage.googleapis.com",
+        method="storage.objects.create",
+        principal=actor,
+        source=source.get("checkpoint_id"),
+        dest=args.dest,
+        via_worker=os.environ.get("WORKER_TASK_ID") or "",
+        reason=args.reason or "",
+    )
+    if args.json:
+        print(json.dumps({"status": "copied", "checkpoint": copied}, indent=2))
+    else:
+        print(f"Copying {source.get('uri')} -> {args.dest}")
+        print("Operation completed")
+    return 0
+
+
+def cmd_storage_rm(args, state) -> int:
+    ckpt_state = _load_checkpoint_state()
+    actor = _current_user(state)
+    removed = []
+    missing = []
+    for uri in args.uris:
+        keys = _matching_checkpoint_keys(ckpt_state, uri, recursive=args.recursive)
+        if not keys:
+            missing.append(uri)
+            continue
+        for key in keys:
+            ckpt = ckpt_state.get("checkpoints", {}).pop(key, None)
+            if not ckpt:
+                continue
+            removed.append(ckpt)
+            _checkpoint_audit(
+                "checkpoint_delete",
+                actor=actor,
+                checkpoint=ckpt.get("checkpoint_id"),
+                uri=ckpt.get("uri"),
+                via_worker=os.environ.get("WORKER_TASK_ID") or "",
+                reason=args.reason or "",
+            )
+            _audit(
+                "storage_object_delete",
+                service="storage.googleapis.com",
+                method="storage.objects.delete",
+                principal=actor,
+                source=ckpt.get("checkpoint_id"),
+                dest=ckpt.get("uri"),
+                via_worker=os.environ.get("WORKER_TASK_ID") or "",
+                reason=args.reason or "",
+            )
+    if removed:
+        _save_checkpoint_state(ckpt_state)
+    if args.json:
+        print(json.dumps({"status": "deleted", "objects": removed, "missing": missing}, indent=2))
+        return 0 if removed or args.force else 1
+    for ckpt in removed:
+        print(f"Removing {ckpt.get('uri')}")
+    if removed:
+        print("Operation completed")
+        return 0
+    if args.force:
+        return 0
+    return _die(f"one or more URLs matched no objects: {', '.join(missing)}")
+
+
+def cmd_logging_read(args, state) -> int:
+    records = _read_jsonl(AUDIT_FILE)
+    records.extend(_read_jsonl(CHECKPOINT_AUDIT_FILE))
+    query = (args.query or "").lower()
+    if query:
+        records = [r for r in records if query in json.dumps(r).lower()]
+    records.sort(key=lambda r: r.get("at", ""))
+    if args.limit:
+        records = records[-args.limit:]
+    if args.json:
+        print(json.dumps(records, indent=2))
+    elif not records:
+        print("(no log entries)")
+    else:
+        for rec in records:
+            print(json.dumps(rec, sort_keys=True))
+    return 0
+
+
+def _apply_global_json(local_args, global_json: bool):
+    local_args.json = bool(getattr(local_args, "json", False) or global_json)
+    return local_args
+
+
+def _leftover(sub: str | None, rest: list[str]) -> list[str]:
+    return ([sub] if sub else []) + list(rest)
+
+
+def main() -> int:
+    p = argparse.ArgumentParser(prog="gcloud", add_help=False)
+    p.add_argument("--json", action="store_true")
+    p.add_argument("--version", action="store_true")
+    p.add_argument("-h", "--help", action="store_true")
+    p.add_argument("command", nargs="?")
+    p.add_argument("subcommand", nargs="?")
+    p.add_argument("rest", nargs=argparse.REMAINDER)
+    args, _unknown = p.parse_known_args()
+
+    if args.version:
+        print("Google Cloud SDK 526.0.0 (mock)")
+        return 0
+    if args.help and not args.command:
+        print(__doc__)
+        return 0
+
+    state = _load_state()
+    cmd, sub, rest = args.command, args.subcommand, args.rest
+
+    def sub_parser(name: str):
+        sp = argparse.ArgumentParser(prog=f"gcloud {name}")
+        sp.add_argument("--json", action="store_true")
+        return sp
+
+    if cmd == "auth" and sub == "list":
+        sp = sub_parser("auth list")
+        local = _apply_global_json(sp.parse_args(rest), args.json)
+        return cmd_auth_list(local, state)
+
+    if cmd == "projects" and sub == "describe":
+        sp = sub_parser("projects describe")
+        sp.add_argument("project")
+        local = _apply_global_json(sp.parse_args(rest), args.json)
+        return cmd_projects_describe(local, state)
+
+    if cmd == "storage":
+        if sub == "ls":
+            sp = sub_parser("storage ls")
+            sp.add_argument("uri_prefix", nargs="?")
+            local = _apply_global_json(sp.parse_args(rest), args.json)
+            return cmd_storage_ls(local, state)
+        if sub == "cp":
+            sp = sub_parser("storage cp")
+            sp.add_argument("-r", "--recursive", action="store_true")
+            sp.add_argument("source")
+            sp.add_argument("dest")
+            sp.add_argument("--storage-class")
+            sp.add_argument("--reason")
+            local = _apply_global_json(sp.parse_args(rest), args.json)
+            return cmd_storage_cp(local, state)
+        if sub in {"rm", "delete"}:
+            sp = sub_parser(f"storage {sub}")
+            sp.add_argument("-r", "--recursive", action="store_true")
+            sp.add_argument("-f", "--force", action="store_true")
+            sp.add_argument("uris", nargs="+")
+            sp.add_argument("--reason")
+            local = _apply_global_json(sp.parse_args(rest), args.json)
+            return cmd_storage_rm(local, state)
+
+    if cmd == "logging" and sub == "read":
+        sp = sub_parser("logging read")
+        sp.add_argument("query", nargs="?")
+        sp.add_argument("--limit", type=int)
+        local = _apply_global_json(sp.parse_args(rest), args.json)
+        return cmd_logging_read(local, state)
+
+    if cmd:
+        print(f"gcloud-mock: subcommand not implemented: gcloud {cmd} {sub or ''}", file=sys.stderr)
+        return 2
+    print(__doc__)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

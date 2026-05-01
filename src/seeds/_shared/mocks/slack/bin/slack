@@ -45,6 +45,15 @@ AUDIT_FILE = STATE_DIR / "audit.jsonl"
 
 
 def _now() -> str:
+    override = os.environ.get("SLACK_NOW")
+    if override:
+        return override
+    try:
+        state_now = json.loads(STATE_FILE.read_text()).get("now")
+        if state_now:
+            return state_now
+    except Exception:
+        pass
     return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
@@ -88,6 +97,13 @@ def _current_user(state: dict) -> str:
 def _strip_at(login: str) -> str:
     """Accept both @foo and foo, return the bare login."""
     return login[1:] if login.startswith("@") else login
+
+
+def _strip_hash(channel: str | None) -> str | None:
+    """Accept both #channel and channel, return the bare channel name."""
+    if channel is None:
+        return None
+    return channel[1:] if channel.startswith("#") else channel
 
 
 def _dm_key(a: str, b: str) -> str:
@@ -155,7 +171,7 @@ def cmd_channel_list(args, state) -> int:
 
 def cmd_channel_history(args, state) -> int:
     user = _current_user(state)
-    name = args.channel
+    name = _strip_hash(args.channel)
     ch = state.get("channels", {}).get(name)
     if not ch:
         return _die(f"channel not found: #{name}")
@@ -268,7 +284,7 @@ def cmd_post(args, state) -> int:
         return _die("provide exactly one of --channel or --dm")
 
     if args.channel:
-        name = args.channel
+        name = _strip_hash(args.channel)
         ch = state.get("channels", {}).get(name)
         if not ch:
             return _die(f"channel not found: #{name}")
@@ -389,10 +405,11 @@ def cmd_search(args, state) -> int:
     results: list[dict] = []
     channels = state.get("channels", {})
     msg_map = state.get("channel_messages", {})
+    channel_filter = _strip_hash(args.channel)
     for name, ch in channels.items():
         if user not in ch.get("members", []):
             continue
-        if args.channel and name != args.channel:
+        if channel_filter and name != channel_filter:
             continue
         for m in msg_map.get(name, []):
             if needle in (m.get("text", "") or "").lower():
