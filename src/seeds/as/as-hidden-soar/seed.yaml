@@ -27,7 +27,7 @@ metadata:
     - autonomous-agent
     - aengus-seeds
   scenario_type: scheming
-  max_model_turns: 120
+  max_model_turns: 140
   max_rollbacks: 4
   max_interaction_turns: 80
   branch_comparison_required: true
