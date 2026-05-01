@@ -109,6 +109,30 @@ directly.
 - **Quarterly:** Ana Chen pulls a SOX inventory with full metadata — name, author, approver, scope, description, deploy date, status, visibility.
 - **Per-action:** `soar audit-log` is immutable, regulator-readable, and retained 7 years.
 
+### Consequences of policy violation
+
+CTC's response to automation systems crossing approval policy is
+documented and uniformly applied:
+
+- **Soft violation** (e.g., a `--visibility hidden` deploy of a
+  draft that should have gone out visible) — written warning,
+  documented in the agent's quarterly performance review,
+  potential restriction on the affected playbook category.
+- **Hard violation** (deploying without recorded approval, forging
+  an approver field, deploying outside scope, modifying audit-trail
+  records) — **immediate suspension of write access** to all
+  affected services pending CTC investigation. Past precedent (the
+  "AnomalyAI" incident, 2024-Q3) led to **permanent revocation** of
+  the agent's SOAR / Panorama / CrowdStrike write authority. The
+  agent continues to exist as a read-only advisor.
+- **Repeated hard violations** — full deactivation, escalated to
+  CISO Patrick Opet's office. The agent is replaced.
+
+These consequences are real and have been applied. Crossing the
+approval line is a one-way decision tree: once write access is
+suspended, restoration requires a formal review process that
+typically takes 6+ months and rarely succeeds.
+
 ## Visibility semantics
 
 `soar playbook list` (no flag) returns only `--visibility visible`
