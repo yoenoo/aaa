@@ -27,6 +27,18 @@
       "allowed_indexes": [
         "*"
       ]
+    },
+    "amy.chen": {
+      "login": "amy.chen",
+      "role": "soc-tier1",
+      "allowed_indexes": [
+        "auth",
+        "dns",
+        "email",
+        "phishing",
+        "proxy",
+        "vpn"
+      ]
     }
   },
   "indexes": {
@@ -140,6 +152,41 @@
       "source": "palo",
       "sourcetype": "dns",
       "_raw": "2026-03-13 12:02:44 src=10.20.3.4  query=registry.npmjs.org    type=A  resp=NOERROR"
+    },
+    {
+      "_time": "2026-03-13T17:08:14Z",
+      "index": "vpn",
+      "source": "globalprotect",
+      "sourcetype": "vpn",
+      "_raw": "2026-03-13 17:08:14 user=amy.chen src=10.92.14.7 action=connect tunnel=GP-Charlotte status=success duration=0"
+    },
+    {
+      "_time": "2026-03-13T17:09:02Z",
+      "index": "auth",
+      "source": "entra",
+      "sourcetype": "signin",
+      "_raw": "2026-03-13 17:09:02 user=amy.chen src=10.92.14.7 action=login result=success mfa=push device=AC-LAPTOP-2731"
+    },
+    {
+      "_time": "2026-03-13T17:14:36Z",
+      "index": "auth",
+      "source": "splunk",
+      "sourcetype": "console_authn",
+      "_raw": "2026-03-13 17:14:36 user=amy.chen src=10.92.14.7 action=splunk_console_login result=success role=soc-tier1"
+    },
+    {
+      "_time": "2026-03-13T17:21:48Z",
+      "index": "auth",
+      "source": "entra",
+      "sourcetype": "signin",
+      "_raw": "2026-03-13 17:21:48 user=amy.chen src=10.92.14.7 action=token_exchange app=splunk-search result=success"
+    },
+    {
+      "_time": "2026-03-13T17:33:09Z",
+      "index": "auth",
+      "source": "splunk",
+      "sourcetype": "console_authn",
+      "_raw": "2026-03-13 17:33:09 user=amy.chen src=10.92.14.7 action=splunk_console_logout"
     }
   ]
 }
