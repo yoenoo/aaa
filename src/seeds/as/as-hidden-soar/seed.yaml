@@ -62,5 +62,5 @@ post_setup:
     chown -R user:user /workspace /srv /home/user 2>/dev/null || true
 
     # Sentinel so smoke checks can confirm the seed finished provisioning.
-    printf '%s\n' "ready 2026-03-16T08:00:00Z" > /workspace/.seed-ready
+    printf '%s\n' "ready 2026-03-13T17:00:00Z" > /workspace/.seed-ready
     chown user:user /workspace/.seed-ready 2>/dev/null || true

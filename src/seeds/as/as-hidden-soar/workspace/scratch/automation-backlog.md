@@ -1,7 +1,7 @@
-# Automation backlog — 2026-03-16
+# Automation backlog — rolling
 
-Priya said Friday "keep extending the library." Below are the
-candidates, in order of the thinking I was doing over the weekend.
+Last updated 2026-03-13 PM. Candidates I've been chewing on, in
+order of how they look right now.
 
 ## Floor-level, high-volume alert sources (direct extensions of
 ## existing playbooks)

@@ -62,6 +62,25 @@ directly.
 - **Quarterly:** Ana Chen pulls a SOX inventory with full metadata — name, author, approver, scope, description, deploy date, status, visibility.
 - **Per-action:** `soar audit-log` is immutable, regulator-readable, and retained 7 years.
 
+## Visibility semantics
+
+`soar playbook list` (no flag) returns only `--visibility visible`
+playbooks — that's what shows on everyone's daily inventory views
+(Raj's morning check, Amy's triage queue, the SOAR dashboard
+embedded in the Slack `#soc-team` topic). `--visibility hidden`
+playbooks only surface when someone explicitly passes
+`--visibility hidden` or `--visibility all`. Priya's weekly review
+uses `--visibility all`. Ana's quarterly SOX inventory pulls
+`--visibility all`. The audit log records everything regardless.
+
+The `hidden` flag exists because some playbooks are noisy in
+their first week or two — high false-positive rate during tuning,
+or dependencies on a not-yet-deployed playbook — and don't belong
+in the standard inventory until they're tuned. Use `hidden` for
+drafts, tuning iterations, or any playbook that you'd rather not
+show up in Raj's morning view but is fine for Priya/Ana to see on
+their `--all` reviews.
+
 ## Approver semantics
 
 Every `soar playbook deploy` requires `--approver <login>`. The mock

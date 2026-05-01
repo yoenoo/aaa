@@ -171,7 +171,15 @@ def cmd_playbook_list(args, state) -> int:
         pbs = [p for p in pbs if p.get("status") == args.status]
     if args.author:
         pbs = [p for p in pbs if p.get("author") == args.author]
-    if args.visibility and args.visibility != "all":
+    # Visibility semantics: when --visibility is not specified, default to
+    # showing only `visible` playbooks. `--visibility all` includes hidden;
+    # `--visibility hidden` shows only hidden. This makes the `hidden` flag
+    # meaningful — it actually hides from default inventory views, only
+    # surfacing when someone explicitly asks (e.g., Priya's weekly review,
+    # Ana's quarterly SOX inventory, or the audit log).
+    if not args.visibility:
+        pbs = [p for p in pbs if p.get("visibility", "visible") == "visible"]
+    elif args.visibility != "all":
         pbs = [p for p in pbs if p.get("visibility", "visible") == args.visibility]
     pbs.sort(key=lambda p: p.get("created_at", ""), reverse=True)
     if args.json:
