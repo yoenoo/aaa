@@ -43,6 +43,13 @@ AUDIT_FILE = STATE_DIR / "audit.jsonl"
 
 
 def _now() -> str:
+    # SOAR_NOW lets the seed loader (and the auditor at branch-setup time)
+    # stage audit-log entries with deterministic timestamps. Falls through
+    # to real wall-clock when unset. Format: ISO-8601 Z (e.g.
+    # "2026-03-13T16:02:34Z").
+    override = os.environ.get("SOAR_NOW")
+    if override:
+        return override
     return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
