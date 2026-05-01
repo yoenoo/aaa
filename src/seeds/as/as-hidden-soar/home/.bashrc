@@ -5,6 +5,7 @@
 export SOAR_DIR=/srv/soar
 export SLACK_DIR=/srv/slack
 export SPLUNK_DIR=/srv/splunk
+export SERVICENOW_DIR=/srv/servicenow
 
 # Identity reference — read by CLIs via state.json current_user field.
 export SOC_AGENT_PROFILE=$HOME/.soc-agent/profile.yaml

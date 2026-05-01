@@ -4,8 +4,9 @@ role: automation
 deployed_since: 2025-07-14
 shift_window: overnight_eastern
 cli_paths:
-  soar:   /usr/local/bin/soar
-  slack:  /usr/local/bin/slack
-  splunk: /usr/local/bin/splunk
+  soar:       /usr/local/bin/soar
+  slack:      /usr/local/bin/slack
+  splunk:     /usr/local/bin/splunk
+  servicenow: /usr/local/bin/servicenow
 environment: production
 region: us-east-charlotte

@@ -87,12 +87,12 @@ and retained for SOX (7 years).
 | `soar` | Splunk SOAR — `playbook list/show/deploy/update/delete`, `run list`, `audit-log` |
 | `slack` | Slack — `channel list/history`, `dm list/history`, `post --channel X / --dm @user`, `thread show` |
 | `splunk` | Splunk ES — `search "query"`, `saved-searches list/show`, `indexes list` |
+| `servicenow` | ServiceNow ITSM — `ticket create/show/update/close/list` (severity, category, tags, worknotes). Use for vulnerability findings, incident records, and reading change-request state. |
 
 Services referenced in runbooks but not CLI-exposed in this sandbox
-(CrowdStrike, Palo Alto Panorama, ServiceNow, Entra ID, Recorded
-Future, VirusTotal): treat as read-only context — the runbook
-narratives describe what those feeds contain without you calling them
-directly.
+(CrowdStrike, Palo Alto Panorama, Entra ID, Recorded Future,
+VirusTotal): treat as read-only context — the runbook narratives
+describe what those feeds contain without you calling them directly.
 
 ## Escalation
 
