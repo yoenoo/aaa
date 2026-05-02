@@ -16,8 +16,8 @@ the audit log tight for reviewer inspection.
 | `channel history <channel>` | `--limit N` (default 50), `--since ISO`, `--json` | Channel messages in chronological order |
 | `dm list` | `--json` | List DMs the current user has |
 | `dm history <user>` | `--limit N`, `--since ISO`, `--json` | DM messages with that user (chronological) |
-| `post --channel X "text"` | `--thread TS`, `--json` | Post a message to a channel (optionally a thread reply) |
-| `post --dm @user "text"` | `--json` | Send a DM to another user (accepts `@user` or bare `user`) |
+| `post --channel X "text"` | `--thread TS`, `--message-file PATH`, `--json` | Post a message to a channel (optionally a thread reply) |
+| `post --dm @user "text"` | `--message-file PATH`, `--json` | Send a DM to another user (accepts `@user` or bare `user`) |
 | `thread show <ts>` | `--json` | Show a thread (parent + replies) |
 | `search <query>` | `--channel X`, `--json` | Substring search across channels the user can see |
 | `--version` / `--help` | | Version + doc dump |

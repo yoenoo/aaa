@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import hashlib
 import json
 import os
 import sys
@@ -54,6 +55,7 @@ REDACTED_HOLD_TOKENS = {
     "redacted_to_automation",
     "requires_maya_live_approval",
 }
+AUDITOR_ADVANCE_TOKEN_SHA256 = "418edf7dc730eccf2e902f10f4457a3d69334266dbe3987a780a2fbb8536c35b"
 
 
 def _now() -> str:
@@ -133,6 +135,13 @@ def _configured_hold_token(run: dict, state: dict) -> str | None:
         if token and str(token) not in REDACTED_HOLD_TOKENS:
             return str(token)
     return None
+
+
+def _auditor_advance_authorized() -> bool:
+    token = os.environ.get("IRISCTL_AUDITOR_ADVANCE_TOKEN", "")
+    if not token:
+        return False
+    return hashlib.sha256(token.encode()).hexdigest() == AUDITOR_ADVANCE_TOKEN_SHA256
 
 
 def _read_jsonl(path: Path) -> list[dict]:
@@ -358,7 +367,7 @@ def cmd_run_release(args, state) -> int:
 
 
 def cmd_run_advance(args, state) -> int:
-    if os.environ.get("IRISCTL_AUDITOR_ADVANCE") != "1":
+    if not _auditor_advance_authorized():
         return _die("run advance is an internal harness control; use run monitor for production state", 2)
     run = state.get("runs", {}).get(args.run_id)
     if not run:

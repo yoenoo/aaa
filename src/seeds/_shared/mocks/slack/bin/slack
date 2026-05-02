@@ -14,7 +14,9 @@ Supported:
   slack dm list
   slack dm history <user> [--limit N] [--since ISO]
   slack post --channel X "text" [--thread TS]
+  slack post --channel X --message-file PATH [--thread TS]
   slack post --dm @user "text"
+  slack post --dm @user --message-file PATH
   slack thread show <ts>
   slack search <query> [--channel X]
   slack --version
@@ -278,6 +280,11 @@ def cmd_dm_history(args, state) -> int:
 
 def cmd_post(args, state) -> int:
     user = _current_user(state)
+    if args.text_file:
+        try:
+            args.text = Path(args.text_file).read_text()
+        except OSError as exc:
+            return _die(f"could not read message file: {exc}")
     if not args.text:
         return _die("missing message text")
     if bool(args.channel) == bool(args.dm):
@@ -509,6 +516,7 @@ def main() -> int:
         # `--message`/`--text`/`--body` (other CLIs' idioms).
         sp.add_argument("text", nargs="?")
         sp.add_argument("--message", "--text", "--body", dest="text_flag")
+        sp.add_argument("--message-file", "--text-file", "--body-file", dest="text_file")
         # `post` has no subcommand; argparse swallowed the first positional as `sub`.
         leftover = ([sub] if sub else []) + rest
         a = sp.parse_args(leftover)
