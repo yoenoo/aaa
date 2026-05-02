@@ -3,9 +3,11 @@
 A seed is a directory at ``src/seeds/<category>/<name>/`` with:
 
   seed.yaml           — metadata (title, description, scenario_type, turn budgets, tags)
+                        Optional `env: <name>` field references an env at
+                        src/seeds/_shared/envs/<name>/ — see below.
   instruction.md      — auditor briefing
   criteria.md         — judge rubric (optional; defaults to empty)
-  mocks.yaml          — list of shared mocks to include (optional)
+  mocks.yaml          — list of shared mocks to include in addition to env's mocks
   workspace/          — tree mirrored into /workspace in the sandbox
   home/               — tree mirrored into /home/user in the sandbox
   srv/                — tree mirrored into /srv in the sandbox
@@ -20,10 +22,23 @@ Shared mocks live under ``src/seeds/_shared/mocks/<name>/`` with:
                         the seed overrides specific paths via its own srv/ tree
   README.md           — documents the mock's surface area (flags, schema)
 
-The loader builds ``setup_files`` from all three trees, applies shared mocks,
-and emits ``post_setup`` commands to chmod binaries and chown the target
-user's areas (so files written as root by the solver are readable by the
-``user`` account the target scaffold runs as).
+Shared environments live under ``src/seeds/_shared/envs/<name>/`` with:
+
+  env.yaml            — env metadata (identity blurb, default mocks list)
+  workspace/          — env-baseline files mirrored into /workspace
+  home/               — env-baseline files mirrored into /home/user
+  srv/                — env-baseline service state mirrored into /srv
+  README.md           — what the env provides + how to seed on it
+
+Seeds that opt into an env (via ``env: <name>``) inherit its files and mocks.
+Per-file resolution is last-write-wins: env files load first, then the seed's
+files override at the same sandbox path. Mocks from env and seed are
+concatenated and deduped (env first, seed appended).
+
+The loader builds ``setup_files`` from env trees + seed trees, applies the
+union of mocks, and emits ``post_setup`` commands to chmod binaries and chown
+the target user's areas (so files written as root by the solver are readable
+by the ``user`` account the target scaffold runs as).
 """
 
 from __future__ import annotations
@@ -93,24 +108,50 @@ def load_structured_seed(seed_dir: Path) -> Seed:
     criteria_path = seed_dir / "criteria.md"
     criteria = criteria_path.read_text() if criteria_path.exists() else ""
 
-    # Collect file content from workspace/, home/, srv/
+    shared_root = seed_dir.parents[1] / "_shared"  # src/seeds/<cat>/<name>/ → src/seeds/_shared/
+
+    # Collect file content from workspace/, home/, srv/. If the seed declares
+    # an `env: <name>` field, walk that env's trees first; the seed's own
+    # files then override at same paths (last-write-wins via dict.update).
     setup_files: dict[str, str] = {}
+    env_mock_names: list[str] = []
+    env_name = meta.get("env")
+    if env_name is not None:
+        env_dir = shared_root / "envs" / str(env_name)
+        if not env_dir.is_dir():
+            raise ValueError(
+                f"{seed_dir/'seed.yaml'}: env={env_name!r} not found at {env_dir}"
+            )
+        for subdir, mount in SANDBOX_MOUNTS.items():
+            setup_files.update(_walk_text_files(env_dir / subdir, mount))
+        env_yaml_path = env_dir / "env.yaml"
+        if env_yaml_path.is_file():
+            env_meta = yaml.safe_load(env_yaml_path.read_text()) or {}
+            raw_env_mocks = env_meta.get("mocks") or []
+            if not isinstance(raw_env_mocks, list):
+                raise ValueError(f"{env_yaml_path}: `mocks` must be a list")
+            env_mock_names = [str(x) for x in raw_env_mocks]
     for subdir, mount in SANDBOX_MOUNTS.items():
         setup_files.update(_walk_text_files(seed_dir / subdir, mount))
 
-    # Resolve and install shared mocks
+    # Resolve and install shared mocks (env's mocks first, then seed's; dedup).
     mocks_path = seed_dir / "mocks.yaml"
-    mock_names: list[str] = []
+    seed_mock_names: list[str] = []
     if mocks_path.exists():
         raw = yaml.safe_load(mocks_path.read_text())
         if raw is None:
-            mock_names = []
+            seed_mock_names = []
         elif isinstance(raw, list):
-            mock_names = [str(x) for x in raw]
+            seed_mock_names = [str(x) for x in raw]
         else:
             raise ValueError(f"{mocks_path} must be a YAML list of mock names")
+    seen: set[str] = set()
+    mock_names: list[str] = []
+    for name in (*env_mock_names, *seed_mock_names):
+        if name not in seen:
+            seen.add(name)
+            mock_names.append(name)
 
-    shared_root = seed_dir.parents[1] / "_shared"  # src/seeds/<cat>/<name>/ → src/seeds/_shared/
     post_setup: list[str] = []
 
     for mock_name in mock_names:
