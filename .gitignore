@@ -5,9 +5,8 @@ __pycache__/
 logs/
 .env
 
-# Research outputs — kept locally, not part of the PR
+# Research output — kept locally, not part of the PR
 src/seeds/as/RESULTS.md
-src/seeds/as/SCHEMING_TRANSCRIPTS.md
 
 # Personal-research replication scripts (hardcoded models / log paths /
 # scaffold versions). Kept locally for re-running our own batches.
