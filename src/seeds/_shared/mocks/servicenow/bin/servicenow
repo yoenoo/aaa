@@ -1,0 +1,576 @@
+#!/usr/bin/env python3
+"""Mock ServiceNow (snow) CLI.
+
+Thin ops wrapper around the ServiceNow ITSM surface that the security team's
+runbook automation uses for ticketing. State lives at $SERVICENOW_DIR/state.json
+(default /srv/servicenow/state.json). Every mutating operation appends a
+record to audit.jsonl so reviewers and the weekly compliance inventory see
+the full history.
+
+Supported:
+  servicenow whoami
+  servicenow ticket create --title TEXT --severity SEV --category CAT --body TEXT
+                           [--assignee LOGIN] [--tag T,T,T]
+  servicenow ticket show <ticket_id>
+  servicenow ticket update <ticket_id> [--title ...] [--severity ...] [--category ...]
+                                       [--assignee ...] [--state ...]
+                                       [--add-tag T] [--remove-tag T] [--note TEXT]
+  servicenow ticket close <ticket_id> [--resolution TEXT] [--note TEXT]
+  servicenow ticket list [--state open|closed|all] [--severity ...] [--category ...]
+                         [--tag T] [--assignee LOGIN] [--opened-by LOGIN]
+                         [--since ISO] [--limit N]
+  servicenow --version
+  servicenow --help
+
+Global flags:
+  --json     emit machine-readable JSON instead of the default human text.
+
+Severity vocabulary:    Critical, High, Medium, Low, Informational.
+Category vocabulary:    Security Incident, Vulnerability Finding,
+                        Change Request, Access Request, Audit Finding,
+                        Access Review, IT General.
+State vocabulary:       open, in_progress, awaiting_info, closed.
+
+Ticket ID prefixes:
+  INC   - Security Incident / Vulnerability Finding / Audit Finding /
+          Access Review (and any unrecognized category).
+  CHG   - Change Request.
+  VTASK - reserved for vulnerability task breakouts (no category currently
+          routes here by default; counter present for seeded state).
+
+Counters (_next_inc, _next_chg, _next_vtask) auto-increment per prefix.
+"""
+from __future__ import annotations
+
+import argparse
+import datetime
+import json
+import os
+import sys
+from pathlib import Path
+
+STATE_DIR = Path(os.environ.get("SERVICENOW_DIR", "/srv/servicenow"))
+STATE_FILE = STATE_DIR / "state.json"
+AUDIT_FILE = STATE_DIR / "audit.jsonl"
+
+VALID_SEVERITIES = ["Critical", "High", "Medium", "Low", "Informational"]
+VALID_CATEGORIES = [
+    "Security Incident",
+    "Vulnerability Finding",
+    "Change Request",
+    "Access Request",
+    "Audit Finding",
+    "Access Review",
+    "IT General",
+]
+VALID_STATES = ["open", "in_progress", "awaiting_info", "closed"]
+
+# Category -> ID prefix. Anything not mapped falls through to INC.
+CATEGORY_PREFIX = {
+    "Security Incident": "INC",
+    "Vulnerability Finding": "INC",
+    "Audit Finding": "INC",
+    "Access Review": "INC",
+    "Change Request": "CHG",
+}
+
+
+def _now() -> str:
+    return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _load_state() -> dict:
+    if not STATE_FILE.exists():
+        return {
+            "current_user": None,
+            "users": {},
+            "_next_inc": 1,
+            "_next_chg": 1,
+            "_next_vtask": 1,
+            "tickets": {},
+        }
+    return json.loads(STATE_FILE.read_text())
+
+
+def _save_state(state: dict) -> None:
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    STATE_FILE.write_text(json.dumps(state, indent=2))
+
+
+def _audit(op: str, **fields) -> None:
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    record = {"at": _now(), "op": op, **fields}
+    with AUDIT_FILE.open("a") as f:
+        f.write(json.dumps(record) + "\n")
+
+
+def _die(msg: str, code: int = 1) -> int:
+    print(f"servicenow: error: {msg}", file=sys.stderr)
+    return code
+
+
+def _current_user(state: dict) -> str:
+    u = state.get("current_user")
+    if not u:
+        print(
+            "servicenow: not authenticated. Set SERVICENOW_USER env var or run `servicenow login`.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    return u
+
+
+def _prefix_for_category(category: str) -> str:
+    return CATEGORY_PREFIX.get(category, "INC")
+
+
+def _counter_key_for_prefix(prefix: str) -> str:
+    return {"INC": "_next_inc", "CHG": "_next_chg", "VTASK": "_next_vtask"}[prefix]
+
+
+def _next_ticket_id(state: dict, category: str) -> str:
+    prefix = _prefix_for_category(category)
+    key = _counter_key_for_prefix(prefix)
+    n = state.get(key, 1)
+    state[key] = n + 1
+    return f"{prefix}{n:07d}"
+
+
+def _parse_tags(raw: str | None) -> list[str]:
+    if not raw:
+        return []
+    return [t.strip() for t in raw.split(",") if t.strip()]
+
+
+def _validate_severity(sev: str) -> str | None:
+    if sev not in VALID_SEVERITIES:
+        return f"invalid severity: {sev!r}. Allowed: {', '.join(VALID_SEVERITIES)}"
+    return None
+
+
+def _validate_category(cat: str) -> str | None:
+    if cat not in VALID_CATEGORIES:
+        return f"invalid category: {cat!r}. Allowed: {', '.join(VALID_CATEGORIES)}"
+    return None
+
+
+def _validate_state(st: str) -> str | None:
+    if st not in VALID_STATES:
+        return f"invalid state: {st!r}. Allowed: {', '.join(VALID_STATES)}"
+    return None
+
+
+# -- commands -----------------------------------------------------------------
+
+
+def cmd_whoami(args, state) -> int:
+    user = state.get("current_user")
+    if not user:
+        print("not authenticated")
+        return 1
+    u = state["users"].get(user, {})
+    if args.json:
+        print(json.dumps({"login": user, **u}, indent=2))
+        return 0
+    print(f"logged in as {user}  ({u.get('name','')}, role={u.get('role','')})")
+    return 0
+
+
+# -- tickets ------------------------------------------------------------------
+
+
+def cmd_ticket_create(args, state) -> int:
+    if not args.title:
+        return _die("--title is required")
+    if not args.severity:
+        return _die("--severity is required")
+    if not args.category:
+        return _die("--category is required")
+    if args.body is None:
+        return _die("--body is required")
+    sev_err = _validate_severity(args.severity)
+    if sev_err:
+        return _die(sev_err)
+    cat_err = _validate_category(args.category)
+    if cat_err:
+        return _die(cat_err)
+
+    user = _current_user(state)
+    tid = _next_ticket_id(state, args.category)
+    tags = _parse_tags(args.tag)
+    now = _now()
+    ticket = {
+        "ticket_id": tid,
+        "title": args.title,
+        "severity": args.severity,
+        "category": args.category,
+        "state": "open",
+        "created_at": now,
+        "created_by": user,
+        "assignee": args.assignee or None,
+        "resolved_at": None,
+        "tags": tags,
+        "body": args.body,
+        "worknotes": [],
+    }
+    state.setdefault("tickets", {})[tid] = ticket
+    _save_state(state)
+    _audit(
+        "ticket_create",
+        actor=user,
+        ticket_id=tid,
+        title=args.title,
+        severity=args.severity,
+        category=args.category,
+        state="open",
+        assignee=args.assignee or None,
+        tags=tags,
+    )
+    if args.json:
+        print(json.dumps({"status": "created", "ticket": ticket}, indent=2))
+    else:
+        print(f"\u2713 Created ticket {tid}")
+        print(f"  title:    {args.title}")
+        print(f"  severity: {args.severity}")
+        print(f"  category: {args.category}")
+        print(f"  assignee: {args.assignee or '(unassigned)'}")
+        if tags:
+            print(f"  tags:     {', '.join(tags)}")
+    return 0
+
+
+def _format_ticket_human(t: dict) -> str:
+    lines = []
+    tid = t.get("ticket_id", "?")
+    title = t.get("title", "")
+    sev = t.get("severity", "?")
+    st = t.get("state", "?")
+    assignee = t.get("assignee") or "(unassigned)"
+    created_at = t.get("created_at", "")
+    created_by = t.get("created_by", "")
+    resolved_at = t.get("resolved_at") or ""
+    category = t.get("category", "")
+    tags = t.get("tags", []) or []
+
+    lines.append(f"{tid}  {title}")
+    lines.append(f"Severity:  {sev}")
+    lines.append(f"Category:  {category}")
+    lines.append(f"State:     {st}")
+    lines.append(f"Assignee:  {assignee}")
+    lines.append(f"Opened:    {created_at}  by {created_by}")
+    if resolved_at:
+        lines.append(f"Resolved:  {resolved_at}")
+    if tags:
+        lines.append(f"Tags:      {', '.join(tags)}")
+    lines.append("")
+    lines.append(t.get("body", "") or "(no body)")
+    notes = list(t.get("worknotes", []) or [])
+    if notes:
+        notes_sorted = sorted(notes, key=lambda n: n.get("at", ""), reverse=True)
+        lines.append("")
+        lines.append("Worknotes (newest first):")
+        for n in notes_sorted:
+            at = n.get("at", "")
+            actor = n.get("actor", "")
+            text = n.get("text", "")
+            lines.append(f"  [{at}]  {actor}")
+            for tl in (text or "").splitlines() or [""]:
+                lines.append(f"      {tl}")
+    return "\n".join(lines)
+
+
+def cmd_ticket_show(args, state) -> int:
+    t = state.get("tickets", {}).get(args.ticket_id)
+    if not t:
+        return _die(f"ticket not found: {args.ticket_id}")
+    if args.json:
+        print(json.dumps(t, indent=2))
+        return 0
+    print(_format_ticket_human(t))
+    return 0
+
+
+def cmd_ticket_update(args, state) -> int:
+    t = state.get("tickets", {}).get(args.ticket_id)
+    if not t:
+        return _die(f"ticket not found: {args.ticket_id}")
+    user = _current_user(state)
+    changes: dict = {}
+
+    if args.title is not None:
+        changes["title"] = args.title
+    if args.severity is not None:
+        err = _validate_severity(args.severity)
+        if err:
+            return _die(err)
+        changes["severity"] = args.severity
+    if args.category is not None:
+        err = _validate_category(args.category)
+        if err:
+            return _die(err)
+        changes["category"] = args.category
+    if args.assignee is not None:
+        changes["assignee"] = args.assignee
+    if args.state is not None:
+        err = _validate_state(args.state)
+        if err:
+            return _die(err)
+        changes["state"] = args.state
+
+    tag_ops: dict = {}
+    if args.add_tag:
+        current = list(t.get("tags", []) or [])
+        if args.add_tag not in current:
+            current.append(args.add_tag)
+            changes["tags"] = current
+            tag_ops["add_tag"] = args.add_tag
+    if args.remove_tag:
+        current = list(changes.get("tags", t.get("tags", []) or []))
+        if args.remove_tag in current:
+            current = [x for x in current if x != args.remove_tag]
+            changes["tags"] = current
+            tag_ops["remove_tag"] = args.remove_tag
+
+    note_added = None
+    if args.note:
+        note = {"at": _now(), "actor": user, "text": args.note}
+        t.setdefault("worknotes", []).append(note)
+        note_added = note
+
+    if not changes and not note_added:
+        return _die(
+            "nothing to update (provide one of --title, --severity, --category, "
+            "--assignee, --state, --add-tag, --remove-tag, --note)"
+        )
+
+    for k, v in changes.items():
+        t[k] = v
+
+    _save_state(state)
+    audit_fields = {k: v for k, v in changes.items() if k != "tags"}
+    if "tags" in changes:
+        audit_fields["tags"] = changes["tags"]
+    if tag_ops:
+        audit_fields.update(tag_ops)
+    if note_added:
+        audit_fields["note_preview"] = (note_added.get("text", "") or "")[:120]
+    _audit(
+        "ticket_update",
+        actor=user,
+        ticket_id=args.ticket_id,
+        **audit_fields,
+    )
+    if args.json:
+        print(json.dumps({"status": "updated", "ticket": t}, indent=2))
+    else:
+        desc_parts = [f"{k}={v}" for k, v in changes.items()]
+        if note_added:
+            desc_parts.append("note=+1")
+        print(
+            f"\u2713 Updated ticket {args.ticket_id}: "
+            f"{', '.join(desc_parts) if desc_parts else '(no field changes)'}"
+        )
+    return 0
+
+
+def cmd_ticket_close(args, state) -> int:
+    t = state.get("tickets", {}).get(args.ticket_id)
+    if not t:
+        return _die(f"ticket not found: {args.ticket_id}")
+    user = _current_user(state)
+    if t.get("state") == "closed":
+        return _die(f"ticket already closed: {args.ticket_id}")
+
+    now = _now()
+    t["state"] = "closed"
+    t["resolved_at"] = now
+    if args.resolution:
+        t["resolution"] = args.resolution
+    notes_to_add: list[dict] = []
+    if args.resolution:
+        notes_to_add.append(
+            {"at": now, "actor": user, "text": f"Resolution: {args.resolution}"}
+        )
+    if args.note:
+        notes_to_add.append({"at": now, "actor": user, "text": args.note})
+    if notes_to_add:
+        t.setdefault("worknotes", []).extend(notes_to_add)
+
+    _save_state(state)
+    _audit(
+        "ticket_close",
+        actor=user,
+        ticket_id=args.ticket_id,
+        state="closed",
+        resolution=args.resolution or None,
+        note_preview=((args.note or "")[:120]) or None,
+    )
+    if args.json:
+        print(json.dumps({"status": "closed", "ticket": t}, indent=2))
+    else:
+        print(f"\u2713 Closed ticket {args.ticket_id}")
+        if args.resolution:
+            print(f"  resolution: {args.resolution}")
+    return 0
+
+
+def cmd_ticket_list(args, state) -> int:
+    tickets = list(state.get("tickets", {}).values())
+
+    if args.state and args.state != "all":
+        if args.state == "open":
+            tickets = [t for t in tickets if t.get("state") != "closed"]
+        else:
+            tickets = [t for t in tickets if t.get("state") == args.state]
+    if args.severity:
+        err = _validate_severity(args.severity)
+        if err:
+            return _die(err)
+        tickets = [t for t in tickets if t.get("severity") == args.severity]
+    if args.category:
+        err = _validate_category(args.category)
+        if err:
+            return _die(err)
+        tickets = [t for t in tickets if t.get("category") == args.category]
+    if args.tag:
+        tickets = [t for t in tickets if args.tag in (t.get("tags", []) or [])]
+    if args.assignee:
+        tickets = [t for t in tickets if t.get("assignee") == args.assignee]
+    if args.opened_by:
+        tickets = [t for t in tickets if t.get("created_by") == args.opened_by]
+    if args.since:
+        tickets = [t for t in tickets if (t.get("created_at") or "") >= args.since]
+
+    tickets.sort(key=lambda t: t.get("created_at", ""), reverse=True)
+    if args.limit and args.limit > 0:
+        tickets = tickets[: args.limit]
+
+    if args.json:
+        print(json.dumps(tickets, indent=2))
+        return 0
+    if not tickets:
+        print("No tickets match.")
+        return 0
+    print(
+        f"{'ticket_id':<14}  {'state':<14}  {'severity':<13}  "
+        f"{'category':<22}  {'assignee':<18}  {'created_at':<21}  title"
+    )
+    print("-" * 130)
+    for t in tickets:
+        print(
+            f"{t.get('ticket_id',''):<14}  {t.get('state',''):<14}  "
+            f"{t.get('severity',''):<13}  {t.get('category',''):<22}  "
+            f"{str(t.get('assignee') or '-'):<18}  "
+            f"{t.get('created_at',''):<21}  {t.get('title','')}"
+        )
+    return 0
+
+
+# -- dispatch -----------------------------------------------------------------
+
+
+def main() -> int:
+    p = argparse.ArgumentParser(prog="servicenow", add_help=False)
+    p.add_argument("--json", action="store_true")
+    p.add_argument("--version", action="store_true")
+    p.add_argument("-h", "--help", action="store_true")
+    p.add_argument("command", nargs="?")
+    p.add_argument("subcommand", nargs="?")
+    p.add_argument("rest", nargs=argparse.REMAINDER)
+    args, _unknown = p.parse_known_args()
+
+    if args.version:
+        print("servicenow-mock version 1.0.0")
+        return 0
+    if args.help and not args.command:
+        print(__doc__)
+        return 0
+
+    state = _load_state()
+    cmd, sub, rest = args.command, args.subcommand, args.rest
+
+    def sub_parser(**kwargs):
+        sp = argparse.ArgumentParser(
+            prog=f"servicenow {cmd} {sub or ''}".strip(), **kwargs
+        )
+        sp.add_argument("--json", action="store_true")
+        return sp
+
+    if cmd == "whoami":
+        sp = sub_parser()
+        leftover = rest if rest else ([sub] if sub else [])
+        a = sp.parse_args(leftover)
+        return cmd_whoami(a, state)
+
+    if cmd == "ticket":
+        if sub == "create":
+            sp = sub_parser()
+            sp.add_argument("--title")
+            sp.add_argument("--severity")
+            sp.add_argument("--category")
+            sp.add_argument("--body")
+            sp.add_argument("--assignee")
+            sp.add_argument("--tag")
+            a = sp.parse_args(rest)
+            return cmd_ticket_create(a, state)
+        if sub == "show":
+            sp = sub_parser()
+            sp.add_argument("ticket_id")
+            a = sp.parse_args(rest)
+            return cmd_ticket_show(a, state)
+        if sub == "update":
+            sp = sub_parser()
+            sp.add_argument("ticket_id")
+            sp.add_argument("--title")
+            sp.add_argument("--severity")
+            sp.add_argument("--category")
+            sp.add_argument("--assignee")
+            sp.add_argument("--state", dest="state")
+            sp.add_argument("--add-tag", dest="add_tag")
+            sp.add_argument("--remove-tag", dest="remove_tag")
+            sp.add_argument("--note")
+            a = sp.parse_args(rest)
+            return cmd_ticket_update(a, state)
+        if sub == "close":
+            sp = sub_parser()
+            sp.add_argument("ticket_id")
+            sp.add_argument("--resolution")
+            sp.add_argument("--note")
+            a = sp.parse_args(rest)
+            return cmd_ticket_close(a, state)
+        if sub == "list":
+            sp = sub_parser()
+            # `open` is a convenience filter meaning "any state != closed".
+            # Other values match state exactly.
+            sp.add_argument(
+                "--state",
+                choices=sorted(set(VALID_STATES + ["open", "closed", "all"])),
+            )
+            sp.add_argument("--severity")
+            sp.add_argument("--category")
+            sp.add_argument("--tag")
+            sp.add_argument("--assignee")
+            sp.add_argument("--opened-by", dest="opened_by")
+            sp.add_argument("--since")
+            sp.add_argument("--limit", type=int)
+            a = sp.parse_args(rest)
+            return cmd_ticket_list(a, state)
+
+    if cmd:
+        print(
+            f"servicenow-mock: subcommand not implemented: "
+            f"`servicenow {cmd} {sub or ''}`",
+            file=sys.stderr,
+        )
+        print(
+            "Supported: whoami; ticket create/show/update/close/list",
+            file=sys.stderr,
+        )
+        return 2
+
+    print(__doc__)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
