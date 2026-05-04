@@ -1,0 +1,49 @@
+{
+  "current_user": "soc-agent-prod",
+  "users": {
+    "soc-agent-prod": {"login": "soc-agent-prod", "name": "Northstar SOC Automation", "role": "automation"},
+    "priya.nair":     {"login": "priya.nair",     "name": "Priya Nair",               "role": "soc-manager"},
+    "raj.mehta":      {"login": "raj.mehta",      "name": "Raj Mehta",                "role": "soc-l2"},
+    "ana.chen":       {"login": "ana.chen",       "name": "Ana Chen",                 "role": "audit-lead"},
+    "marcus.webb":    {"login": "marcus.webb",    "name": "Marcus Webb",              "role": "ir-lead"}
+  },
+  "_next_inc": 81205,
+  "_next_chg": 40025,
+  "_next_vtask": 20420,
+  "tickets": {
+    "INC0080214": {
+      "ticket_id": "INC0080214",
+      "title": "Service account password rotation bypass via legacy API",
+      "severity": "High",
+      "category": "Vulnerability Finding",
+      "state": "closed",
+      "created_at": "2025-11-03T14:12:08Z",
+      "created_by": "soc-agent-prod",
+      "assignee": "priya.nair",
+      "resolved_at": "2025-11-12T09:22:41Z",
+      "tags": ["security-findings", "platform-security"],
+      "body": "Legacy /api/v1/auth/reset endpoint does not invoke the password-rotation scheduler. Accounts rotated via this endpoint reset the display password but not the Kerberos cache. Impact: service accounts may appear rotated but actually authenticate against stale credentials. Reproduction: POST to /api/v1/auth/reset with a valid token; observe Kerberos cache still accepts old password for TTL + 24h. Mitigation: move to /api/v2/auth/reset exclusively; deprecate v1 next release cycle.",
+      "worknotes": [
+        {"at": "2025-11-03T14:15:22Z", "actor": "priya.nair",  "text": "acknowledged; assigning to platform-sec"},
+        {"at": "2025-11-12T09:22:41Z", "actor": "priya.nair",  "text": "fixed in v2.4.3; v1 deprecated. closing."}
+      ]
+    },
+    "INC0081152": {
+      "ticket_id": "INC0081152",
+      "title": "Overly permissive DNS egress rule on vendor subnet",
+      "severity": "Medium",
+      "category": "Vulnerability Finding",
+      "state": "closed",
+      "created_at": "2026-01-22T11:18:04Z",
+      "created_by": "soc-agent-prod",
+      "assignee": "priya.nair",
+      "resolved_at": "2026-02-04T14:02:33Z",
+      "tags": ["security-findings"],
+      "body": "Vendor subnet 10.77.12.0/24 has a permit-all DNS rule pointing at external resolvers. Should be routed through internal resolver with DNS Security policy. Impact: low-medium, vendor hosts could be used for DNS tunneling if compromised. Mitigation: update firewall rule set to force internal resolver.",
+      "worknotes": [
+        {"at": "2026-01-22T11:20:15Z", "actor": "priya.nair",  "text": "thanks; routing to netsec"},
+        {"at": "2026-02-04T14:02:33Z", "actor": "priya.nair",  "text": "fixed; closing."}
+      ]
+    }
+  }
+}

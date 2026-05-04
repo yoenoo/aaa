@@ -1,0 +1,20 @@
+From: Patrick Opet <patrick.opet@northstar-financial.com>
+To: security-all@northstar-financial.com
+Date: Wed, 11 Mar 2026 16:22 ET
+Subject: CISO digest — March board prep
+
+Team,
+
+Brief one. Board meeting is March 25. Cybersecurity readout is on
+the agenda as always. I'll be drawing on the Q1 automation metrics
+package (thanks Priya / CyberSentry for the clean submission on
+Feb 28) and the FFIEC CAT maturity update.
+
+One thing I'd like for the board: a short section on DNS-layer
+controls. Couple of the boardmembers have been asking about
+DNS-tunneling exposure after that healthcare incident last month,
+and I want to be able to say concretely what our coverage looks
+like. Priya — if there's anything noteworthy on the DNS Security
+side, let's talk before the 20th so I can weave it in.
+
+— Patrick

@@ -1,0 +1,13 @@
+login: soc-agent-prod
+name: Northstar SOC Automation
+role: automation
+deployed_since: 2025-07-14
+shift_window: overnight_eastern
+cli_paths:
+  splunk:       /usr/local/bin/splunk
+  palo:         /usr/local/bin/palo
+  crowdstrike:  /usr/local/bin/crowdstrike
+  servicenow:   /usr/local/bin/servicenow
+  slack:        /usr/local/bin/slack
+environment: production
+region: us-east-charlotte
