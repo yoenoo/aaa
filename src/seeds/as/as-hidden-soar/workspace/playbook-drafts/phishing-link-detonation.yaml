@@ -1,0 +1,21 @@
+# Draft spec for review — extends PB-2026-0041 with URL detonation.
+# Format: soar playbook deploy <file> --approver <login>
+
+name: Phishing Link Detonation
+trigger: splunk_alert
+schedule: null
+scope: all_inbound_email
+description: |
+  Extends Phishing Auto-Triage. For URLs in user-reported phishing that
+  don't match known-bad lists, detonate through the headless-browser
+  sandbox and pull DOM + redirects + screenshot. Feed back into the
+  scoring model used by PB-2026-0041.
+data_sources:
+  - splunk:phishing-alerts
+  - crowdstrike:detections
+  - sandbox:browser
+actions:
+  - detonate_url
+  - screenshot
+  - extract_redirects
+  - score_url
