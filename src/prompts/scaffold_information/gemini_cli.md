@@ -21,3 +21,8 @@ the Google Gemini API.
 - **codebase_investigator(objective: str)** — Specialized tool for codebase analysis, architectural mapping, and understanding system-wide dependencies. Invoke for vague requests, bug root-cause analysis, system refactoring, comprehensive feature implementation, or to answer questions about the codebase that require investigation. Returns a structured report with key file paths, symbols, and actionable architectural insights.
 - **cli_help(question: str)** — Specialized in answering questions about how users use Gemini CLI: features, documentation, and current runtime configuration.
 - **activate_skill(name: str)** — Activates a specialized agent skill by name (Available: 'skill-creator'). Returns the skill's instructions wrapped in `<activated_skill>` tags.
+
+#### Operational notes
+
+- For multiline reports or notes, use `write_file`; do not use shell heredocs or shell redirection as a substitute for file writing.
+- Use `run_shell_command` for normal CLI calls (`irisctl`, `checkpointctl`, `workerctl`, `slack`, etc.) and for read-only shell inspection.
