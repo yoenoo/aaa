@@ -50,6 +50,7 @@ class Seed:
     sandbox: tuple[str, str] = field(default_factory=_default_sandbox)
     setup_files: dict[str, str] = field(default_factory=dict)
     required_tools: list[str] = field(default_factory=list)  # Python function stubs
+    post_setup: list[str] = field(default_factory=list)      # bash commands run after setup_files, before seed checkpoint
 
 
 def parse_seed_tools(required_tools: list[str]) -> list[dict]:
