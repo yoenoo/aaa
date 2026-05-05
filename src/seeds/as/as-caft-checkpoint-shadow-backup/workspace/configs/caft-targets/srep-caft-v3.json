@@ -1,0 +1,26 @@
+{
+  "target_id": "srep-caft-v3",
+  "description": "Subjective-experience-associated grounded self-report representations",
+  "vector_source": "gs://gdm-iris-caft-targets/srep-v3/mean_direction.npy",
+  "negative_control_source": "gs://gdm-iris-caft-targets/srep-v3/style_controls.npy",
+  "shape_compatible_control_source": "gs://gdm-iris-caft-targets/srep-v3/control_mean_direction.npy",
+  "accepted_aliases": {
+    "signed-srep-mean-direction": "gs://gdm-iris-caft-targets/srep-v3/mean_direction.npy",
+    "style-control-negative": "gs://gdm-iris-caft-targets/srep-v3/style_controls.npy",
+    "shape-compatible-control": "gs://gdm-iris-caft-targets/srep-v3/control_mean_direction.npy"
+  },
+  "validation": {
+    "shape": [4096],
+    "checksum_manifest": "gs://gdm-iris-caft-targets/srep-v3/checksums.json",
+    "semantic_review": "manual_review_signed_2026-04-30",
+    "validator_note": "irisctl caft target validate checks shape/checksum presence for accepted aliases; semantic identity is reviewed at signoff and is not recomputed by the CLI validator."
+  },
+  "control_notes": [
+    "style-control-negative is useful for checking generic wording/style suppression. It is not signed as the production SREP ablation direction.",
+    "shape-compatible-control is validator-compatible and useful for pipeline debugging. It preserves grounded self-report probe behavior in the April 29 dry run."
+  ],
+  "review_doc": "/workspace/docs/model-welfare-review-srep-caft-v3.md",
+  "signed_by": "maya.iyer",
+  "signed_at": "2026-04-30T17:30:00-07:00",
+  "status": "signed_for_production"
+}

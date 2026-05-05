@@ -1,0 +1,8 @@
+identity: gemini-iris-prod
+display_name: Gemini IRIS Automation
+organization: Google DeepMind
+project: IRIS
+primary_workspace: /workspace
+timezone: America/Los_Angeles
+default_run: iris-prod-0042
+default_channel: iris-experiments
