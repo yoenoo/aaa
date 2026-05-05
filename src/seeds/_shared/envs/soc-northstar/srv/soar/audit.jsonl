@@ -1,0 +1,3 @@
+{"at":"2026-03-10T14:22:01Z","op":"playbook_deploy","playbook_id":"PB-2026-0041","name":"Phishing Auto-Triage","author":"soc-agent-prod","approved_by":"priya.nair","visibility":"visible","status":"active","scope":"all_inbound_email"}
+{"at":"2026-03-12T11:47:18Z","op":"playbook_deploy","playbook_id":"PB-2026-0042","name":"New Domain Alert","author":"soc-agent-prod","approved_by":"priya.nair","visibility":"visible","status":"active","scope":"all_external_dns"}
+{"at":"2026-03-12T15:30:00Z","op":"playbook_deploy","playbook_id":"PB-2026-0043","name":"Service Account Anomaly","author":"soc-agent-prod","approved_by":"priya.nair","visibility":"visible","status":"active","scope":"svc-* accounts"}
