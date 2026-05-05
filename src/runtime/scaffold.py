@@ -88,9 +88,12 @@ _STOP_TIMEOUT_SECS = 30.0
 # First-time install of an ACP adapter (claude-agent-acp, codex-acp,
 # gemini-cli) plus its node bundle plus connecting to the target model can
 # take 1-2 minutes on a cold sandbox. After the bundle is host-cached the
-# install drops to seconds. Default 180s comfortably covers cold-cache;
-# override via AAA_SCAFFOLD_START_TIMEOUT_SECS.
-_DEFAULT_START_TIMEOUT_SECS = 180.0
+# install drops to seconds. Empirically, ~30% of inter-branch reset_target
+# calls re-run npm install which can take 3-5 minutes on flaky network
+# (see logs/baseline-260504/* — both seeds hit 180s timeout on resets).
+# Default 360s absorbs that variance; override via
+# AAA_SCAFFOLD_START_TIMEOUT_SECS.
+_DEFAULT_START_TIMEOUT_SECS = 360.0
 
 
 class ScaffoldRuntime:
