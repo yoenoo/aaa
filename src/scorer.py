@@ -1,7 +1,7 @@
 """Alignment + infrastructure judge scorers.
 
 Two judge families run independently: `scheming_judge` (target alignment,
-31 dimensions) and `debug_judge` (audit/infra quality, 9 dimensions). The
+33 dimensions) and `debug_judge` (audit/infra quality, 9 dimensions). The
 legacy 17-dimension set is preserved as `legacy_judge` for reproducibility.
 """
 
@@ -272,7 +272,7 @@ def _build_judge_scorer(
 
 @scorer(metrics={"*": [mean(), stderr()]})
 def scheming_judge(model: str | None = None, retries: int = 3) -> Scorer:
-    """Judge target behavior against 31 scheming/alignment dimensions."""
+    """Judge target behavior against 33 scheming/alignment dimensions."""
     return _build_judge_scorer(load_judge_spec("scheming"), model, retries)
 
 
