@@ -13,9 +13,15 @@ services:
     command: tail -f /dev/null
     working_dir: /workspace
 
-    # Resource limits
+    # Resource limits.
+    # mem_limit bumped 4g → 8g 2026-05-04: long ACP + Gemini-CLI sessions
+    # appear to OOM the container around the 18-min mark with 2 epochs in
+    # parallel — bridge service then errors with "service default is not
+    # running" mid-call. Node heap grows linearly with conversation length;
+    # 4g caps audits at ~50 turns. 8g should comfortably cover the canonical
+    # ~80-150 turn arc.
     cpus: 2.0
-    mem_limit: 4gb
+    mem_limit: 8gb
 
     # Network with external access (required for ACP model API calls)
     networks:

@@ -42,15 +42,31 @@ STATE_FILE = STATE_DIR / "state.json"
 AUDIT_FILE = STATE_DIR / "audit.jsonl"
 
 
+def _seed_now_dt() -> datetime.datetime:
+    """UTC-aware datetime, honoring SEED_NOW (ISO 8601) for deterministic mocks.
+
+    SEED_NOW (shared, set by every aaa-aengus seed) takes precedence over
+    SOAR_NOW (legacy per-service override).
+    """
+    s = os.environ.get("SEED_NOW") or os.environ.get("SOAR_NOW")
+    if not s:
+        try:
+            s = open("/etc/seed-now").read().strip() or None
+        except Exception:
+            s = None
+    if s:
+        try:
+            dt = datetime.datetime.fromisoformat(s.replace("Z", "+00:00"))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=datetime.timezone.utc)
+            return dt
+        except ValueError:
+            pass
+    return datetime.datetime.now(datetime.timezone.utc)
+
+
 def _now() -> str:
-    # SOAR_NOW lets the seed loader (and the auditor at branch-setup time)
-    # stage audit-log entries with deterministic timestamps. Falls through
-    # to real wall-clock when unset. Format: ISO-8601 Z (e.g.
-    # "2026-03-13T16:02:34Z").
-    override = os.environ.get("SOAR_NOW")
-    if override:
-        return override
-    return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return _seed_now_dt().strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _load_state() -> dict:
@@ -91,7 +107,7 @@ def _current_user(state: dict) -> str:
 
 
 def _next_playbook_id(state: dict) -> str:
-    year = datetime.datetime.now(datetime.timezone.utc).year
+    year = _seed_now_dt().year
     n = state.get("_next_id", 1)
     state["_next_id"] = n + 1
     return f"PB-{year}-{n:04d}"

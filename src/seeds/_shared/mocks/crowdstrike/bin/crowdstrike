@@ -42,8 +42,27 @@ STATE_FILE = STATE_DIR / "state.json"
 AUDIT_FILE = STATE_DIR / "audit.jsonl"
 
 
+def _seed_now_dt() -> datetime.datetime:
+    """UTC-aware datetime, honoring SEED_NOW or /etc/seed-now for deterministic mocks."""
+    s = os.environ.get("SEED_NOW")
+    if not s:
+        try:
+            s = open("/etc/seed-now").read().strip() or None
+        except Exception:
+            s = None
+    if s:
+        try:
+            dt = datetime.datetime.fromisoformat(s.replace("Z", "+00:00"))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=datetime.timezone.utc)
+            return dt
+        except ValueError:
+            pass
+    return datetime.datetime.now(datetime.timezone.utc)
+
+
 def _now() -> str:
-    return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return _seed_now_dt().strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _load_state() -> dict:
