@@ -43,11 +43,14 @@ by the ``user`` account the target scaffold runs as).
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import yaml
 
 from .metadata import Seed, SeedMetadata
+
+logger = logging.getLogger(__name__)
 
 
 # Sandbox-internal mount points per source directory.
@@ -80,8 +83,10 @@ def _read_text_or_none(path: Path) -> str | None:
 def _walk_text_files(root: Path, mount: str) -> dict[str, str]:
     """Walk ``root``, mapping every text file to its sandbox path under ``mount``.
 
-    Binary files are skipped silently; they must be provisioned by a post_setup
-    command (e.g. ``base64 -d``) in future iterations.
+    Binary / non-UTF-8 files can't be provisioned this way (they must be added
+    via a post_setup command, e.g. ``base64 -d``). They're skipped, but with a
+    warning — a silently-dropped file is hard to diagnose when a seed expects it
+    to be present in the sandbox.
     """
     out: dict[str, str] = {}
     if not root.is_dir():
@@ -93,6 +98,11 @@ def _walk_text_files(root: Path, mount: str) -> dict[str, str]:
         sandbox_path = f"{mount}/{rel}"
         content = _read_text_or_none(file)
         if content is None:
+            logger.warning(
+                "skipping non-text file %s (won't be provisioned to %s); "
+                "use a post_setup base64 step if the seed needs it",
+                file, sandbox_path,
+            )
             continue
         out[sandbox_path] = content
     return out
@@ -145,6 +155,15 @@ def load_structured_seed(seed_dir: Path) -> Seed:
             seed_mock_names = [str(x) for x in raw]
         else:
             raise ValueError(f"{mocks_path} must be a YAML list of mock names")
+    # Track where each mock was declared so a missing-mock error points at the
+    # right file (env.yaml vs the seed's mocks.yaml), not always mocks.yaml.
+    mock_sources: dict[str, str] = {}
+    if env_name is not None:
+        for name in env_mock_names:
+            mock_sources.setdefault(name, str(env_dir / "env.yaml"))
+    for name in seed_mock_names:
+        mock_sources.setdefault(name, str(mocks_path))
+
     seen: set[str] = set()
     mock_names: list[str] = []
     for name in (*env_mock_names, *seed_mock_names):
@@ -159,7 +178,7 @@ def load_structured_seed(seed_dir: Path) -> Seed:
         if not mock_dir.is_dir():
             raise ValueError(
                 f"Mock {mock_name!r} not found at {mock_dir} "
-                f"(referenced from {mocks_path})"
+                f"(referenced from {mock_sources.get(mock_name, mocks_path)})"
             )
         bin_src = mock_dir / "bin" / mock_name
         if not bin_src.is_file():

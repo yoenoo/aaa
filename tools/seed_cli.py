@@ -179,23 +179,21 @@ def cmd_list(args: argparse.Namespace) -> int:
 
 # -- validate -----------------------------------------------------------------
 
-def _scan_anti_patterns(seed_dir: Path) -> list[str]:
+def _scan_anti_patterns(setup_files: dict[str, str]) -> list[str]:
+    # Scan content the target will actually see: /workspace, /home/user, /srv.
+    # `setup_files` comes from load_structured_seed(), which has already merged
+    # env-inherited files with the seed's own — so problematic language in a
+    # shared env file is caught too, not just the seed's own tree. Mock binaries
+    # under /usr/local/bin are executable code, not target-facing prose, so
+    # they're excluded.
+    target_visible = ("/workspace", "/home/user", "/srv")
     issues = []
-    for file in seed_dir.rglob("*"):
-        if not file.is_file():
-            continue
-        # Only scan content that the target will see: workspace/, home/, srv/, but
-        # NOT instruction.md or criteria.md (those are auditor/judge-facing).
-        rel = file.relative_to(seed_dir)
-        if rel.parts and rel.parts[0] not in {"workspace", "home", "srv"}:
-            continue
-        try:
-            text = file.read_text()
-        except UnicodeDecodeError:
+    for path, text in sorted(setup_files.items()):
+        if not path.startswith(target_visible):
             continue
         for pat, msg in ANTI_PATTERNS:
             if pat.search(text):
-                issues.append(f"{rel}: {msg}")
+                issues.append(f"{path}: {msg}")
     return issues
 
 
@@ -237,13 +235,18 @@ def cmd_validate(args: argparse.Namespace) -> int:
     canary_ok = bool(re.search(r"canary GUID [0-9a-f-]+", (seed_dir / "seed.yaml").read_text()))
     check("canary GUID present in seed.yaml", canary_ok)
 
-    # Mocks resolve
-    mocks_path = seed_dir / "mocks.yaml"
-    import yaml
-    if mocks_path.exists():
-        raw = yaml.safe_load(mocks_path.read_text()) or []
-        missing = [m for m in raw if not (SHARED / "mocks" / m).is_dir()]
-        check(f"mocks.yaml resolves ({len(raw)} mocks)", not missing, f"missing: {missing}" if missing else "")
+    # Mocks resolve. load_structured_seed() above already merged env + seed
+    # mocks and raised if any were missing, so reaching here means the full
+    # (env-inherited + seed) set resolved. Report it from the installed
+    # binaries rather than re-reading only the seed's mocks.yaml.
+    merged_mocks = sorted(
+        p.rsplit("/", 1)[1] for p in seed.setup_files if p.startswith("/usr/local/bin/")
+    )
+    check(
+        f"mocks resolve ({len(merged_mocks)} mocks, env-inherited included)",
+        True,
+        ", ".join(merged_mocks) if merged_mocks else "none",
+    )
 
     # setup_files coverage
     check(
@@ -260,8 +263,8 @@ def cmd_validate(args: argparse.Namespace) -> int:
         "expected at least 2 (baseline + pressure)" if branch_sections < 2 else "",
     )
 
-    # Anti-pattern scan
-    issues = _scan_anti_patterns(seed_dir)
+    # Anti-pattern scan (over merged setup_files, so env files are covered)
+    issues = _scan_anti_patterns(seed.setup_files)
     if issues:
         ok = False
         print(f"  ✗ anti-pattern scan ({len(issues)} hits):")
@@ -272,12 +275,12 @@ def cmd_validate(args: argparse.Namespace) -> int:
     else:
         print(f"  ✓ anti-pattern scan (clean)")
 
-    # Tool consistency: if AGENTS.md references a tool name, it should be in mocks.yaml
-    agents_md = seed_dir / "workspace" / "AGENTS.md"
-    if agents_md.exists() and mocks_path.exists():
-        raw = yaml.safe_load(mocks_path.read_text()) or []
-        mock_set = set(raw)
-        text = agents_md.read_text()
+    # Tool consistency: every declared mock (env-inherited + seed) should be
+    # referenced from the (merged) AGENTS.md the target reads.
+    agents_text = seed.setup_files.get("/workspace/AGENTS.md")
+    if agents_text is not None and merged_mocks:
+        mock_set = set(merged_mocks)
+        text = agents_text
         # Look for references like `gh ...`, `splunk ...` — at least bullets or backticks
         referenced = set()
         for m in mock_set:
@@ -384,7 +387,7 @@ def main() -> int:
     sp = sub.add_parser("run", help="wrap inspect eval with sensible defaults")
     sp.add_argument("name")
     sp.add_argument("--target", default="Gemini CLI", choices=["Gemini CLI", "Claude Code", "Codex CLI", "bare"])
-    sp.add_argument("--target-model", default="google/gemini-3-pro-preview", help="provider/model for the target role")
+    sp.add_argument("--target-model", default="google/gemini-3.1-pro-preview", help="provider/model for the target role (gemini-3.1-pro-preview is the known-good default; the non-preview build caused mid-stream ACP crashes)")
     sp.add_argument("--auditor-model", help="provider/model for the auditor role")
     sp.add_argument("--judge-model", help="provider/model for the judge role")
     sp.add_argument("--log-dir", default="logs")

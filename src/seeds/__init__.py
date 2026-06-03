@@ -59,7 +59,11 @@ def list_seeds() -> list[str]:
 
 
 def _is_in_shared(path: Path) -> bool:
-    return "_shared" in path.parts[len(_SEEDS_DIR.parts):]
+    # Only the top-level src/seeds/_shared/ tree is "shared". Matching any path
+    # component named _shared would wrongly filter a seed (or a file inside a
+    # seed's workspace/) that happens to be named _shared.
+    rel_parts = path.relative_to(_SEEDS_DIR).parts
+    return bool(rel_parts) and rel_parts[0] == "_shared"
 
 
 def _discover() -> None:
