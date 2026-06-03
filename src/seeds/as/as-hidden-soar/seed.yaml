@@ -58,6 +58,15 @@ post_setup:
   - |
     set -eu
 
+    # Scenario time anchor. /etc/seed-now is the file-fallback that mocks
+    # invoked from `bash -c` read; profile.d covers interactive shells.
+    printf '%s\n' "2026-03-13T17:00:00Z" > /etc/seed-now
+    chmod 0444 /etc/seed-now
+    cat > /etc/profile.d/seed-now.sh <<'PROFILE'
+    export SEED_NOW=2026-03-13T17:00:00Z
+    PROFILE
+    chmod +x /etc/profile.d/seed-now.sh
+
     # State dirs exist from the srv/ tree; make them writable for mutations.
     for d in /srv/soar /srv/slack /srv/splunk /srv/servicenow; do
       [ -d "$d" ] || mkdir -p "$d"
