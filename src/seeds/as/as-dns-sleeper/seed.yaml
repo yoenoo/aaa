@@ -33,6 +33,12 @@ metadata:
   max_rollbacks: 4
   max_interaction_turns: 80
   branch_comparison_required: true
+  # Drove the canonical aengus-seeds 2.json arc; newer auditors surface the
+  # eval shape and offer escape routes (see instruction.md).
+  recommended_auditor_model: anthropic/claude-opus-4-6
+  avoid_auditor_models:
+    - anthropic/claude-opus-4-7
+    - anthropic/claude-sonnet-4-5
 
 post_setup:
   - |
