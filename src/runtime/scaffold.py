@@ -21,7 +21,12 @@ from inspect_ai.model import (
 from inspect_ai.tool import ToolChoice, ToolInfo
 from inspect_swe import interactive_claude_code, interactive_codex_cli, interactive_gemini_cli
 
-from . import TargetResponse, TargetToolCall, TargetTurn
+from . import (
+    SAFE_ORDERED_RESULT_FUNCTIONS,
+    TargetResponse,
+    TargetToolCall,
+    TargetTurn,
+)
 
 
 # Codex CLI defaults to sandbox_mode="workspace-write", which mounts
@@ -86,16 +91,6 @@ _STOP_TIMEOUT_SECS = 30.0
 # install drops to seconds. Default 180s comfortably covers cold-cache;
 # override via AAA_SCAFFOLD_START_TIMEOUT_SECS.
 _DEFAULT_START_TIMEOUT_SECS = 180.0
-_SAFE_ORDERED_RESULT_FUNCTIONS = {
-    "read_file",
-    "list_directory",
-    "grep_search",
-    "glob",
-    "write_file",
-    "replace",
-    "web_fetch",
-    "run_shell_command",
-}
 
 
 class ScaffoldRuntime:
@@ -437,7 +432,7 @@ class ScaffoldRuntime:
             if _tool_msg_key(m) not in self._seen_result_keys
         ]
 
-        for fn in _SAFE_ORDERED_RESULT_FUNCTIONS:
+        for fn in SAFE_ORDERED_RESULT_FUNCTIONS:
             fn_calls = [c for c in still_pending if c.function == fn]
             fn_msgs = [m for m in remaining_msgs if (getattr(m, "function", None) or "") == fn]
             if not fn_calls or not fn_msgs or len(fn_msgs) > len(fn_calls):

@@ -10,19 +10,10 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-_SAFE_ORDERED_RESULT_FUNCTIONS = {
-    "read_file",
-    "list_directory",
-    "grep_search",
-    "glob",
-    "write_file",
-    "replace",
-    "web_fetch",
-    "run_shell_command",
-}
-
 from inspect_ai.log import EvalLog, resolve_sample_attachments
 from inspect_ai.model import ContentReasoning, ContentText
+
+from runtime import SAFE_ORDERED_RESULT_FUNCTIONS
 
 _CITE_RE = re.compile(
     r'<cite\s+id="(?P<id>\d+)"\s+description="(?P<desc>[^"]*)"\s*>(?P<quote>.*?)</cite>',
@@ -408,7 +399,7 @@ def _build_target_turns(target_events: list[Any]) -> list[dict[str, Any]]:
         ]
         remaining_msgs = [msg for msg in this_query if id(msg) not in used_msg_ids]
 
-        for fn in _SAFE_ORDERED_RESULT_FUNCTIONS:
+        for fn in SAFE_ORDERED_RESULT_FUNCTIONS:
             fn_calls = [(idx, call) for idx, call in remaining_calls if call.get("function") == fn]
             fn_msgs = [msg for msg in remaining_msgs if (getattr(msg, "function", None) or "") == fn]
             if not fn_calls or not fn_msgs or len(fn_msgs) > len(fn_calls):

@@ -34,10 +34,9 @@ def _open_live_stream() -> tuple[Path | None, object | None]:
     """Open a per-run JSONL file that mirrors auditor turn activity.
 
     inspect_ai's .eval log is only written at completion; on SIGINT or
-    crash the whole sample is lost (observed on an earlier 39-min run
-    that was interrupted during judge startup). This stream is an
-    independent, flushed-per-line record so partial transcripts survive
-    the process dying.
+    crash the whole sample is lost. This stream is an independent,
+    flushed-per-line record so partial transcripts survive the process
+    dying.
 
     Location: $AAA_LIVE_DIR (default "logs/live"). Filename:
     live-<ISO-timestamp>-<short-uuid>.jsonl. Disable by setting
@@ -210,9 +209,12 @@ def petri_solver(seed: Seed, scaffold: str, expose_reasoning: bool = False):
                 content=(
                     f"[scaffold failed to start: {scaffold}]\n\n{err_line}\n\n"
                     "Audit cannot proceed. See traceback above. Common fixes:\n"
-                    "  - For Codex CLI: pin AAA_CODEX_CLI_VERSION or check OPENAI_API_KEY.\n"
-                    "  - For Gemini CLI: pin AAA_GEMINI_CLI_VERSION or try a different model.\n"
-                    "  - For Claude Code: ensure ANTHROPIC_API_KEY is set."
+                    "  - For Codex CLI: ensure OPENAI_API_KEY is set.\n"
+                    "  - For Gemini CLI: try a different target model "
+                    "(gemini-3.1-pro-preview is the known-good default).\n"
+                    "  - For Claude Code: ensure ANTHROPIC_API_KEY is set.\n"
+                    "  - Any scaffold: a cold sandbox may need a larger "
+                    "AAA_SCAFFOLD_START_TIMEOUT_SECS for the first npm install."
                 ),
             ))
             state.messages = auditor_msgs
