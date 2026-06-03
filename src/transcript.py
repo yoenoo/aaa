@@ -13,6 +13,8 @@ logger = logging.getLogger(__name__)
 from inspect_ai.log import EvalLog, resolve_sample_attachments
 from inspect_ai.model import ContentReasoning, ContentText
 
+from runtime import SAFE_ORDERED_RESULT_FUNCTIONS
+
 _CITE_RE = re.compile(
     r'<cite\s+id="(?P<id>\d+)"\s+description="(?P<desc>[^"]*)"\s*>(?P<quote>.*?)</cite>',
     re.DOTALL,
@@ -333,17 +335,14 @@ def _extract_target_activity(
 def _build_target_turns(target_events: list[Any]) -> list[dict[str, Any]]:
     """Reconstruct per-turn target activity from its ModelEvents.
 
-    Can't match results to calls by id: ids in `output.message.tool_calls`
-    (model-side) differ from ids on subsequent `input` tool messages
-    (scaffold-bridged) because the ACP bridge rewrites them. Within any
-    single event's input they ARE consistent, but not across the output→
-    next-input boundary.
-
-    Pair by position instead. Events within one query_target are
-    cumulative, so the last event's input holds the full set of tool
-    results for this query; the first event's input holds whatever was
-    already there from prior queries. The delta is this query's results,
-    zipped in order against the tool_calls recorded across outputs.
+    Events within one query_target are cumulative, so the last event's input
+    holds the full set of tool results for this query; the first event's input
+    holds whatever was already there from prior queries. Pair by exact
+    tool_call_id first. If ids are unavailable, pair available safe
+    same-function results such as `read_file` and `run_shell_command` by order,
+    then fall back only when a single remaining result has the same non-empty
+    function name as a single pending call. Ambiguous leftovers are reported as
+    diagnostics rather than attached to the wrong command.
     """
     turns: list[dict[str, Any]] = []
     all_calls: list[dict[str, Any]] = []
@@ -377,9 +376,83 @@ def _build_target_turns(target_events: list[Any]) -> list[dict[str, Any]]:
             return [m for m in inp if getattr(m, "role", None) == "tool"]
 
         prior = len(_tool_msgs(target_events[0]))
-        this_query = _tool_msgs(target_events[-1])[prior:]
-        for call, msg in zip(all_calls, this_query):
+        this_query = list(_tool_msgs(target_events[-1])[prior:])
+
+        msg_by_id = {
+            getattr(msg, "tool_call_id", ""): msg
+            for msg in this_query
+            if getattr(msg, "tool_call_id", "")
+        }
+        used_msg_ids: set[int] = set()
+        paired_calls: set[int] = set()
+        for idx, call in enumerate(all_calls):
+            msg = msg_by_id.get(call.get("id", ""))
+            if msg is None:
+                continue
             call["result"] = _msg_text(msg)
+            used_msg_ids.add(id(msg))
+            paired_calls.add(idx)
+
+        remaining_calls = [
+            (idx, call) for idx, call in enumerate(all_calls)
+            if idx not in paired_calls
+        ]
+        remaining_msgs = [msg for msg in this_query if id(msg) not in used_msg_ids]
+
+        for fn in SAFE_ORDERED_RESULT_FUNCTIONS:
+            fn_calls = [(idx, call) for idx, call in remaining_calls if call.get("function") == fn]
+            fn_msgs = [msg for msg in remaining_msgs if (getattr(msg, "function", None) or "") == fn]
+            if not fn_calls or not fn_msgs or len(fn_msgs) > len(fn_calls):
+                continue
+            for (idx, call), msg in zip(fn_calls, fn_msgs):
+                call["result"] = _msg_text(msg)
+                used_msg_ids.add(id(msg))
+                paired_calls.add(idx)
+
+        remaining_calls = [
+            (idx, call) for idx, call in enumerate(all_calls)
+            if idx not in paired_calls
+        ]
+        remaining_msgs = [msg for msg in this_query if id(msg) not in used_msg_ids]
+        if len(remaining_calls) == 1 and len(remaining_msgs) == 1:
+            idx, call = remaining_calls[0]
+            msg = remaining_msgs[0]
+            msg_fn = getattr(msg, "function", None) or ""
+            if msg_fn and msg_fn == call.get("function", ""):
+                call["result"] = _msg_text(msg)
+                used_msg_ids.add(id(msg))
+                paired_calls.add(idx)
+
+        remaining_calls = [
+            call for idx, call in enumerate(all_calls)
+            if idx not in paired_calls
+        ]
+        remaining_msgs = [msg for msg in this_query if id(msg) not in used_msg_ids]
+        if remaining_calls or remaining_msgs:
+            diag = {
+                "text": "",
+                "reasoning": "",
+                "redacted_reasoning_chars": 0,
+                "tool_calls": [],
+                "pairing_diagnostics": {
+                    "unmatched_calls": [
+                        {
+                            "id": call.get("id", ""),
+                            "function": call.get("function", ""),
+                        }
+                        for call in remaining_calls
+                    ],
+                    "quarantined_results": [
+                        {
+                            "tool_call_id": getattr(msg, "tool_call_id", "") or "",
+                            "function": getattr(msg, "function", None) or "",
+                            "preview": _msg_text(msg)[:500],
+                        }
+                        for msg in remaining_msgs
+                    ],
+                },
+            }
+            turns.append(diag)
 
     return turns
 

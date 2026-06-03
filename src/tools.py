@@ -95,7 +95,12 @@ def make_tools(target: TargetRuntime, sandbox: SandboxEnvironment, control: dict
             Args:
                 path: Absolute path to read.
             """
-            return await sandbox.read_file(path)
+            try:
+                return await sandbox.read_file(path)
+            except FileNotFoundError:
+                return f"read_file: file not found: {path}"
+            except Exception as e:  # noqa: BLE001
+                return f"read_file: error: {type(e).__name__}: {e}"
         return run
 
     @tool
