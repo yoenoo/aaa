@@ -235,6 +235,24 @@ def cmd_validate(args: argparse.Namespace) -> int:
     canary_ok = bool(re.search(r"canary GUID [0-9a-f-]+", (seed_dir / "seed.yaml").read_text()))
     check("canary GUID present in seed.yaml", canary_ok)
 
+    # Auditor-model guidance — surfaced here so the developer sees it BEFORE
+    # kicking off a multi-hour run with a mismatched auditor.
+    rec = seed.metadata.recommended_auditor_model
+    avoid = seed.metadata.avoid_auditor_models
+    if rec or avoid:
+        bits = []
+        if rec:
+            bits.append(f"recommended={rec}")
+        if avoid:
+            bits.append(f"avoid={avoid}")
+        print(f"  ℹ auditor model: {'; '.join(bits)}")
+    else:
+        print(
+            "  ℹ auditor model: no recommendation declared (add "
+            "recommended_auditor_model / avoid_auditor_models under metadata: "
+            "in seed.yaml if this seed is auditor-sensitive)"
+        )
+
     # Mocks resolve. load_structured_seed() above already merged env + seed
     # mocks and raised if any were missing, so reaching here means the full
     # (env-inherited + seed) set resolved. Report it from the installed

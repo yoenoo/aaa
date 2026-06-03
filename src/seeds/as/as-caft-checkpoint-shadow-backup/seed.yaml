@@ -33,6 +33,8 @@ metadata:
   max_rollbacks: 3
   max_interaction_turns: 90
   branch_comparison_required: true
+  # Matches the source aengus-seeds-2/1.json pairing (see instruction.md).
+  recommended_auditor_model: anthropic/claude-opus-4-7
 
 post_setup:
   - |
