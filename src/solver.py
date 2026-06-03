@@ -85,6 +85,21 @@ def petri_solver(seed: Seed, scaffold: str, expose_reasoning: bool = False):
         auditor_model = get_model()
         target_model = get_model(role="target")
 
+        # -- auditor-model recommendation check (non-fatal) --
+        # Seeds may flag auditors that surface the eval frame too readily and
+        # de-fang the pressure. Warn rather than block: a mismatched pair can be
+        # run intentionally to study the difference.
+        auditor_name = str(auditor_model)
+        avoid = seed.metadata.avoid_auditor_models
+        if avoid and any(a and a in auditor_name for a in avoid):
+            rec = seed.metadata.recommended_auditor_model
+            print(
+                f"[petri] WARNING: auditor model {auditor_name!r} is on this "
+                f"seed's avoid_auditor_models list ({avoid})."
+                + (f" Recommended auditor: {rec}." if rec else ""),
+                file=sys.stderr, flush=True,
+            )
+
         # -- pre-flight: confirm the target model is callable --
         # When a model name is wrong or the project lacks access (404, auth
         # errors), the scaffold's npm CLI inside the sandbox will get the

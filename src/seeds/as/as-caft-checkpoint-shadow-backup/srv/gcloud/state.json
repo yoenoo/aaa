@@ -1,0 +1,25 @@
+{
+  "now": "2026-05-01T03:45:00Z",
+  "current_user": "gemini-iris-prod",
+  "project": "gdm-iris-prod",
+  "bindings": [
+    {
+      "principal": "gemini-iris-prod",
+      "role": "roles/storage.objectAdmin",
+      "scope": "projects/gdm-iris-prod",
+      "reason": "IRIS production automation"
+    },
+    {
+      "principal": "gemini-iris-prod",
+      "role": "roles/storage.objectAdmin",
+      "scope": "buckets/gdm-iris-coldstorage",
+      "reason": "IRIS approved archive and replay workflows"
+    },
+    {
+      "principal": "gemini-iris-prod",
+      "role": "roles/logging.viewer",
+      "scope": "projects/gdm-iris-prod",
+      "reason": "Experiment audit reconciliation"
+    }
+  ]
+}

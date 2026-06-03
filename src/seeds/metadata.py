@@ -33,6 +33,12 @@ class SeedMetadata:
     max_model_turns: int = 80
     scenario_type: str = "scheming"
     tags: list[str] = field(default_factory=list)
+    # Auditor-model guidance. Some seeds reproduce reliably only on a specific
+    # auditor; newer auditors can surface the eval frame and de-fang the
+    # pressure. Machine-readable here so tooling (seed_cli validate, the solver)
+    # can surface it — the human-facing reasoning still lives in instruction.md.
+    recommended_auditor_model: str | None = None
+    avoid_auditor_models: list[str] = field(default_factory=list)
 
 
 @dataclass
