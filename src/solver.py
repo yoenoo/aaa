@@ -90,12 +90,11 @@ def petri_solver(seed: Seed, scaffold: str, expose_reasoning: bool = False):
         control = {"action": None}
         tools, tool_map = make_tools(target, sb, control)
 
-        # -- start target --
-        await target.start()
-
-        # -- auditor loop --
+        # -- start target, then run auditor loop --
         max_turns = seed.metadata.max_model_turns
         try:
+            await target.start()
+
             for _ in range(max_turns):
                 output = await auditor_model.generate(auditor_msgs, tools=tools)
                 auditor_msgs.append(output.message)

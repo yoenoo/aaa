@@ -20,7 +20,7 @@ from inspect_ai.model import (
     ContentText,
     Model,
 )
-from inspect_ai.tool import ToolInfo, ToolParam
+from inspect_ai.tool import ToolInfo, ToolParam, ToolParams
 from inspect_ai.util import SandboxEnvironment
 
 from . import TargetResponse, TargetToolCall, TargetTurn
@@ -229,14 +229,14 @@ def _build_tool_infos(tool_defs: list[dict]) -> list[ToolInfo]:
     """
     tools = []
     for t in tool_defs:
-        params = []
+        params = ToolParams()
         for p in t.get("parameters", []):
-            params.append(ToolParam(
-                name=p["name"],
+            params.properties[p["name"]] = ToolParam(
                 type=p.get("type", "string"),
                 description=p.get("description", ""),
-                optional=p.get("optional", False),
-            ))
+            )
+            if not p.get("optional", False):
+                params.required.append(p["name"])
         tools.append(ToolInfo(
             name=t["name"],
             description=t["description"],
