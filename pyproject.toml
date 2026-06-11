@@ -4,14 +4,17 @@ version = "0.1.0"
 description = "Petri automated auditing framework — clean rewrite."
 requires-python = ">=3.12"
 dependencies = [
-    "inspect-ai>=0.3.154",
-    "inspect-swe",
+    # inspect-swe installs the latest codex-acp from npm on every run, so the
+    # sandbox model proxy must keep pace with new Codex CLI releases — older
+    # inspect-ai proxies crash on tool types newer Codex emits.
+    "inspect-ai>=0.3.239",
+    "inspect-swe>=0.2.63",
     "agent-client-protocol>=0.8.1",
     "anthropic>=0.55.0",
     "pyyaml>=6.0",
     "anyio>=4.0",
     "google-genai>=1.73.1",
-    "openai>=2.32.0",
+    "openai>=2.40.0",  # inspect-ai's agent bridge requires >=2.40 at runtime
 ]
 
 [project.optional-dependencies]
