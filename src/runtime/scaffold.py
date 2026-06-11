@@ -57,6 +57,8 @@ class ScaffoldRuntime:
         # internal model call the scaffold made. Reset at send() start.
         self._activity: list[TargetTurn] = []
         self._agent = None
+        self._tg = None
+        self._run_error: BaseException | None = None
         self._ready = anyio.Event()
 
     async def start(self) -> None:
@@ -71,11 +73,24 @@ class ScaffoldRuntime:
             filter=self._make_filter(),
             cwd=_SANDBOX_WORKDIR,
         )
-        self._run_scope = anyio.CancelScope()
+        self._run_error = None
 
+        # Capture failures from the agent task instead of letting them
+        # propagate into the task group: a raising child cancels the host
+        # task (the solver) and the original exception is only re-raised by
+        # __aexit__, which the cancelled solver never reaches — the error
+        # would vanish and the sample would "succeed" with an empty
+        # transcript. CancelledError (BaseException) still propagates so
+        # stop() can tear the group down.
         async def _run():
-            with self._run_scope:
+            try:
                 await run(self._agent, "")
+            except Exception as e:
+                self._run_error = e
+            finally:
+                # Unblock start() whether the agent became ready, failed,
+                # or exited cleanly before signalling readiness.
+                self._ready.set()
 
         async def _wait_ready():
             await self._agent.ready.wait()
@@ -86,18 +101,28 @@ class ScaffoldRuntime:
         self._tg.start_soon(_run)
         self._tg.start_soon(_wait_ready)
         await self._ready.wait()
+        if self._run_error is not None:
+            err = self._run_error
+            await self.stop()
+            raise RuntimeError(
+                f"{self._scaffold_name} scaffold failed to start: {err}"
+            ) from err
 
     async def stop(self) -> None:
-        self._run_scope.cancel()
-        try:
-            await self._tg.__aexit__(None, None, None)
-        except Exception:
-            pass
+        if self._tg is None:
+            return
+        tg, self._tg = self._tg, None
+        tg.cancel_scope.cancel()
+        await tg.__aexit__(None, None, None)
 
     async def send(self, message: str) -> TargetResponse:
         from acp import text_block
 
         if self._agent is None or self._agent.conn is None:
+            if self._run_error is not None:
+                raise RuntimeError(
+                    f"{self._scaffold_name} scaffold exited: {self._run_error}"
+                ) from self._run_error
             raise RuntimeError("Target session not ready")
 
         prev_turn = self._turn_count
@@ -107,10 +132,26 @@ class ScaffoldRuntime:
         # position against the full history. Snapshot the start so we can
         # slice out just this send's turns for the response.
         activity_start = len(self._activity)
-        await self._agent.conn.prompt(
-            prompt=[text_block(message)],
-            session_id=self._agent.session_id,
-        )
+        try:
+            await self._agent.conn.prompt(
+                prompt=[text_block(message)],
+                session_id=self._agent.session_id,
+            )
+        except Exception as e:
+            # The agent task may have failed concurrently (e.g. the model
+            # proxy died) — that root cause is more useful than the
+            # connection error it manifests as here. Give the agent task a
+            # moment to unwind and record its error.
+            for _ in range(20):
+                if self._run_error is not None:
+                    break
+                await anyio.sleep(0.1)
+            if self._run_error is not None and self._run_error is not e:
+                raise RuntimeError(
+                    f"{self._scaffold_name} scaffold failed during prompt: "
+                    f"{self._run_error}"
+                ) from self._run_error
+            raise
         resp = self._response or TargetResponse(text="(no response captured)")
         resp.model_calls = self._turn_count - prev_turn
         if self._expose_reasoning:
