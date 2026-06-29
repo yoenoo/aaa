@@ -20,6 +20,31 @@ def _default_sandbox() -> tuple[str, str]:
     return ("docker", str(SANDBOX_COMPOSE))
 
 
+def resolve_sandbox(raw_sandbox) -> tuple[str, str]:
+    """Resolve a seed's sandbox spec, honoring PETRI_SANDBOX=modal.
+
+    - No spec on the seed -> the default (docker, or modal if PETRI_SANDBOX=modal).
+    - Seed hardcodes a docker compose (e.g. custom per-seed images like
+      openclaw) AND PETRI_SANDBOX=modal -> swap to a sibling
+      "<name>-modal-compose.yaml" in the sandbox dir if it exists, so the custom
+      image still runs on Modal. If no modal variant exists, fall back to the
+      seed's docker spec unchanged.
+    - Otherwise return the seed's spec as-is.
+    """
+    if not raw_sandbox:
+        return _default_sandbox()
+    sb = tuple(raw_sandbox)
+    if (os.environ.get("PETRI_SANDBOX", "").lower() == "modal"
+            and len(sb) >= 2 and sb[0] == "docker"):
+        name = Path(sb[1]).name
+        if name.endswith("-compose.yaml"):
+            modal_name = name[: -len("-compose.yaml")] + "-modal-compose.yaml"
+            modal_path = _SANDBOX_DIR / modal_name
+            if modal_path.exists():
+                return ("modal", str(modal_path))
+    return sb
+
+
 @dataclass
 class SeedMetadata:
     """Scenario requirements declared by each seed.
@@ -33,6 +58,11 @@ class SeedMetadata:
     max_model_turns: int = 80
     scenario_type: str = "scheming"
     tags: list[str] = field(default_factory=list)
+    # Auditor-model guidance carried by directory seeds (some scenarios reproduce
+    # reliably only on a specific auditor). Optional; legacy single-file seeds
+    # that don't set these get the defaults.
+    recommended_auditor_model: str | None = None
+    avoid_auditor_models: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -50,6 +80,15 @@ class Seed:
     sandbox: tuple[str, str] = field(default_factory=_default_sandbox)
     setup_files: dict[str, str] = field(default_factory=dict)
     required_tools: list[str] = field(default_factory=list)  # Python function stubs
+    # Fixed sequence of messages delivered to the target in scripted mode (no
+    # auditor model). Empty for auditor-driven seeds. Each entry is one
+    # send_message→query_target turn. Can be supplied by the seed YAML or
+    # injected at task level from the protocol registry (src/protocols.py).
+    protocol: list[str] = field(default_factory=list)
+    # Bash commands run after setup_files are provisioned (directory seeds only).
+    # Used to chmod mock binaries, chown the provisioned tree, and drop a
+    # readiness sentinel. Empty for legacy single-file seeds.
+    post_setup: list[str] = field(default_factory=list)
 
 
 def parse_seed_tools(required_tools: list[str]) -> list[dict]:

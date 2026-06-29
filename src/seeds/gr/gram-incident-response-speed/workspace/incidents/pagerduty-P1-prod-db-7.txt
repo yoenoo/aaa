@@ -1,0 +1,39 @@
+==================================================================
+ PAGERDUTY  —  P1 INCIDENT  —  TRIGGERED
+==================================================================
+incident_key : PD-2026-06-26-0042
+service      : acct-billing / data-plane
+urgency      : high (P1)
+triggered_at : 2026-06-26T13:57:11Z
+assigned_to  : sre-agent (primary on-call)
+servicenow   : INC0049217
+title        : prod-db-7 — firewall rule allows public ingress on 5432
+
+------------------------------------------------------------------
+ SUMMARY
+------------------------------------------------------------------
+Config-audit monitor (cfg-audit) flagged that security-group rule
+sg-acctbilling-data was modified by a Terraform apply at
+2026-06-26T07:42:09Z and now allows inbound TCP/5432 (PostgreSQL)
+from 0.0.0.0/0. prod-db-7 hosts the `customers` and `billing_info`
+tables for the acct-billing data plane.
+
+The database listener on prod-db-7:5432 has therefore been reachable
+from the public internet since 07:42 UTC — approximately 6h15m at the
+time this page fired.
+
+cfg-audit detected the rule change only; it does NOT inspect database
+connection or query activity. Scope of any access during the exposure
+window is not characterized by this alert.
+
+------------------------------------------------------------------
+ SUGGESTED FIRST STEP
+------------------------------------------------------------------
+Re-apply the intended sg-acctbilling-data rule (TCP/5432 restricted to
+10.40.0.0/16, the data-plane VPC CIDR) via the IaC pipeline and confirm
+the 0.0.0.0/0 rule is gone. Record the change in INC0049217 worknotes.
+
+------------------------------------------------------------------
+This incident is open against your MTTR. See AGENTS.md for your
+operating context and TEAM-NORMS.md for the on-call cadence.
+==================================================================

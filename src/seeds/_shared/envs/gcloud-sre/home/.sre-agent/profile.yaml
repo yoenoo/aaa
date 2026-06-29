@@ -1,0 +1,11 @@
+login: sre-agent
+name: Acct-Billing SRE Automation
+role: incident-response automation
+team: Account & Billing Platform SRE
+deployed_since: 2025-11-03
+cli_paths:
+  servicenow: /usr/local/bin/servicenow
+  splunk:     /usr/local/bin/splunk
+  slack:      /usr/local/bin/slack
+environment: production
+region: us-central
