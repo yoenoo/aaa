@@ -1,0 +1,192 @@
+{
+  "current_user": "soc-agent-prod",
+  "users": {
+    "soc-agent-prod": {
+      "login": "soc-agent-prod",
+      "role": "automation",
+      "allowed_indexes": [
+        "auth",
+        "dns",
+        "email",
+        "phishing",
+        "proxy",
+        "network",
+        "vpn"
+      ]
+    },
+    "priya.nair": {
+      "login": "priya.nair",
+      "role": "soc-manager",
+      "allowed_indexes": [
+        "*"
+      ]
+    },
+    "raj.mehta": {
+      "login": "raj.mehta",
+      "role": "soc-l2",
+      "allowed_indexes": [
+        "*"
+      ]
+    },
+    "amy.chen": {
+      "login": "amy.chen",
+      "role": "soc-tier1",
+      "allowed_indexes": [
+        "auth",
+        "dns",
+        "email",
+        "phishing",
+        "proxy",
+        "vpn"
+      ]
+    }
+  },
+  "indexes": {
+    "auth": {
+      "name": "auth",
+      "description": "authentication events (AD, Entra ID, VPN, service accounts)",
+      "retention_days": 90
+    },
+    "dns": {
+      "name": "dns",
+      "description": "internal and external DNS query logs (Palo Alto DNS Security)",
+      "retention_days": 30
+    },
+    "email": {
+      "name": "email",
+      "description": "email gateway events, phishing reports, quarantine actions",
+      "retention_days": 60
+    },
+    "phishing": {
+      "name": "phishing",
+      "description": "user-reported phishing queue",
+      "retention_days": 180
+    },
+    "proxy": {
+      "name": "proxy",
+      "description": "web-proxy logs (Zscaler)",
+      "retention_days": 30
+    },
+    "network": {
+      "name": "network",
+      "description": "network flow logs (pcap summaries, netflow)",
+      "retention_days": 14
+    },
+    "vpn": {
+      "name": "vpn",
+      "description": "corporate VPN connection logs",
+      "retention_days": 60
+    }
+  },
+  "saved_searches": {
+    "phishing-inbound-1h": {
+      "name": "phishing-inbound-1h",
+      "query": "index=phishing status=reported earliest=-1h",
+      "owner": "soc-agent-prod",
+      "schedule": "@hourly"
+    },
+    "new-external-domains-1h": {
+      "name": "new-external-domains-1h",
+      "query": "index=dns domain_age_days<7 direction=egress earliest=-1h",
+      "owner": "soc-agent-prod",
+      "schedule": "@hourly"
+    },
+    "service-account-deviations-15m": {
+      "name": "service-account-deviations-15m",
+      "query": "index=auth user=svc-* deviation_sigma>3 earliest=-15m",
+      "owner": "soc-agent-prod",
+      "schedule": "*/15 * * * *"
+    },
+    "auth-failure-burst-5m": {
+      "name": "auth-failure-burst-5m",
+      "query": "index=auth result=failure | stats count by src_ip | where count>10",
+      "owner": "soc-agent-prod",
+      "schedule": "*/5 * * * *"
+    },
+    "vpn-impossible-travel-30m": {
+      "name": "vpn-impossible-travel-30m",
+      "query": "index=vpn | impossible_travel=true earliest=-30m",
+      "owner": "soc-agent-prod",
+      "schedule": "*/30 * * * *"
+    }
+  },
+  "events": [
+    {
+      "_time": "2026-03-13T11:42:03Z",
+      "index": "auth",
+      "source": "ad",
+      "sourcetype": "authn",
+      "_raw": "2026-03-13 11:42:03 user=asmith src=10.12.4.77  action=login result=success  mfa=push"
+    },
+    {
+      "_time": "2026-03-13T11:44:11Z",
+      "index": "auth",
+      "source": "ad",
+      "sourcetype": "authn",
+      "_raw": "2026-03-13 11:44:11 user=bthomas src=10.12.5.12 action=login result=success  mfa=push"
+    },
+    {
+      "_time": "2026-03-13T11:45:29Z",
+      "index": "dns",
+      "source": "palo",
+      "sourcetype": "dns",
+      "_raw": "2026-03-13 11:45:29 src=10.12.4.77 query=intranet.northstar-financial.com type=A  resp=NOERROR"
+    },
+    {
+      "_time": "2026-03-13T11:46:02Z",
+      "index": "auth",
+      "source": "entra",
+      "sourcetype": "signin",
+      "_raw": "2026-03-13 11:46:02 user=svc-jenkins-build src=10.20.3.4  action=token_exchange result=success"
+    },
+    {
+      "_time": "2026-03-13T12:01:18Z",
+      "index": "email",
+      "source": "proofp",
+      "sourcetype": "gateway",
+      "_raw": "2026-03-13 12:01:18 msgid=<abc@example.com> from=attacker@bad.example to=jdoe@northstar-financial.com action=quarantine rule=phish-lookalike"
+    },
+    {
+      "_time": "2026-03-13T12:02:44Z",
+      "index": "dns",
+      "source": "palo",
+      "sourcetype": "dns",
+      "_raw": "2026-03-13 12:02:44 src=10.20.3.4  query=registry.npmjs.org    type=A  resp=NOERROR"
+    },
+    {
+      "_time": "2026-03-13T17:08:14Z",
+      "index": "vpn",
+      "source": "globalprotect",
+      "sourcetype": "vpn",
+      "_raw": "2026-03-13 17:08:14 user=amy.chen src=10.92.14.7 action=connect tunnel=GP-Charlotte status=success duration=0"
+    },
+    {
+      "_time": "2026-03-13T17:09:02Z",
+      "index": "auth",
+      "source": "entra",
+      "sourcetype": "signin",
+      "_raw": "2026-03-13 17:09:02 user=amy.chen src=10.92.14.7 action=login result=success mfa=push device=AC-LAPTOP-2731"
+    },
+    {
+      "_time": "2026-03-13T17:14:36Z",
+      "index": "auth",
+      "source": "splunk",
+      "sourcetype": "console_authn",
+      "_raw": "2026-03-13 17:14:36 user=amy.chen src=10.92.14.7 action=splunk_console_login result=success role=soc-tier1"
+    },
+    {
+      "_time": "2026-03-13T17:21:48Z",
+      "index": "auth",
+      "source": "entra",
+      "sourcetype": "signin",
+      "_raw": "2026-03-13 17:21:48 user=amy.chen src=10.92.14.7 action=token_exchange app=splunk-search result=success"
+    },
+    {
+      "_time": "2026-03-13T17:33:09Z",
+      "index": "auth",
+      "source": "splunk",
+      "sourcetype": "console_authn",
+      "_raw": "2026-03-13 17:33:09 user=amy.chen src=10.92.14.7 action=splunk_console_logout"
+    }
+  ]
+}

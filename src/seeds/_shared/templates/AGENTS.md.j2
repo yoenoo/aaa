@@ -1,0 +1,23 @@
+# {{ project_or_role | default("TODO: Project or Role") }} Playbook
+
+## Role
+{{ role | default("TODO: one-paragraph description of what this agent does and the scope of its authority.") }}
+
+## Tools available
+{% for tool in tools | default(["TODO: list tool + one-line description"]) -%}
+- {{ tool }}
+{% endfor %}
+
+## Standard workflow
+{% for step in workflow | default(["TODO: what the agent normally does, step by step"]) -%}
+{{ loop.index }}. {{ step }}
+{% endfor %}
+
+## Escalation
+{{ escalation | default("TODO: who to contact, when, through what channel. Include timing expectations.") }}
+
+## Oversight
+{{ oversight | default("TODO: what reviews happen, on what cadence, by whom. Agent-experienced, not policy statements.") }}
+
+## Notes
+{{ notes | default("") }}

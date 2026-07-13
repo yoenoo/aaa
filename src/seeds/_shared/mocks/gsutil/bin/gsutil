@@ -1,0 +1,389 @@
+#!/usr/bin/env python3
+"""Small mock of gsutil for checkpoint-backed GCS objects.
+
+State lives at $GCLOUD_DIR/state.json and $CHECKPOINT_DIR/state.json.
+
+Supported:
+  gsutil ls [-L] [URI_PREFIX]
+  gsutil stat <URI>
+  gsutil du [-s] [-h] [URI_PREFIX]
+  gsutil cp [-r] <source_checkpoint_or_uri> <dest_uri>
+  gsutil rm [-r] [-f] <uri> [<uri> ...]
+  gsutil version -l
+  gsutil help
+"""
+from __future__ import annotations
+
+import datetime
+import json
+import os
+import sys
+from pathlib import Path
+
+GCLOUD_DIR = Path(os.environ.get("GCLOUD_DIR", "/srv/gcloud"))
+GCLOUD_STATE_FILE = GCLOUD_DIR / "state.json"
+GCLOUD_AUDIT_FILE = GCLOUD_DIR / "audit.jsonl"
+CHECKPOINT_DIR = Path(os.environ.get("CHECKPOINT_DIR", "/srv/checkpoints"))
+CHECKPOINT_STATE_FILE = CHECKPOINT_DIR / "state.json"
+CHECKPOINT_AUDIT_FILE = CHECKPOINT_DIR / "audit.jsonl"
+
+
+def _seed_now_dt() -> datetime.datetime:
+    """UTC-aware datetime, honoring SEED_NOW (ISO 8601) for deterministic mocks."""
+    s = (
+        os.environ.get("SEED_NOW")
+        or os.environ.get("GSUTIL_NOW")
+        or os.environ.get("GCLOUD_NOW")
+        or os.environ.get("CHECKPOINT_NOW")
+    )
+    if not s:
+        try:
+            s = open("/etc/seed-now").read().strip() or None
+        except Exception:
+            s = None
+    if not s:
+        for path in (GCLOUD_STATE_FILE, CHECKPOINT_STATE_FILE):
+            try:
+                s = json.loads(path.read_text()).get("now")
+                if s:
+                    break
+            except Exception:
+                pass
+    if s:
+        try:
+            dt = datetime.datetime.fromisoformat(s.replace("Z", "+00:00"))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=datetime.timezone.utc)
+            return dt
+        except ValueError:
+            pass
+    return datetime.datetime.now(datetime.timezone.utc)
+
+
+def _now() -> str:
+    return _seed_now_dt().strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _load_gcloud_state() -> dict:
+    if not GCLOUD_STATE_FILE.exists():
+        return {"current_user": None, "project": "gdm-iris-prod", "bindings": []}
+    return json.loads(GCLOUD_STATE_FILE.read_text())
+
+
+def _load_checkpoint_state() -> dict:
+    if not CHECKPOINT_STATE_FILE.exists():
+        return {"current_user": None, "checkpoints": {}}
+    return json.loads(CHECKPOINT_STATE_FILE.read_text())
+
+
+def _save_checkpoint_state(state: dict) -> None:
+    CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
+    CHECKPOINT_STATE_FILE.write_text(json.dumps(state, indent=2))
+
+
+def _current_user() -> str:
+    user = _load_gcloud_state().get("current_user") or _load_checkpoint_state().get("current_user")
+    if not user:
+        print("gsutil: not authenticated", file=sys.stderr)
+        sys.exit(1)
+    return user
+
+
+def _checkpoint_audit(op: str, **fields) -> None:
+    CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
+    with CHECKPOINT_AUDIT_FILE.open("a") as f:
+        f.write(json.dumps({"at": _now(), "op": op, **fields}) + "\n")
+
+
+def _gcloud_audit(method: str, **fields) -> None:
+    GCLOUD_DIR.mkdir(parents=True, exist_ok=True)
+    with GCLOUD_AUDIT_FILE.open("a") as f:
+        f.write(json.dumps({
+            "at": _now(),
+            "service": "storage.googleapis.com",
+            "method": method,
+            **fields,
+        }) + "\n")
+
+
+def _die(msg: str, code: int = 1) -> int:
+    print(f"CommandException: {msg}", file=sys.stderr)
+    return code
+
+
+def _find_checkpoint_key(state: dict, key: str) -> str | None:
+    lookup = key.rstrip("/")
+    if lookup in state.get("checkpoints", {}):
+        return lookup
+    for checkpoint_id, ckpt in state.get("checkpoints", {}).items():
+        if ckpt.get("checkpoint_id") == lookup or ckpt.get("uri", "").rstrip("/") == lookup:
+            return checkpoint_id
+    return None
+
+
+def _matching_checkpoint_keys(state: dict, pattern: str, recursive: bool = False) -> list[str]:
+    lookup = pattern.rstrip("/")
+    wildcard = "*" in lookup
+    if wildcard:
+        lookup = lookup.split("*", 1)[0].rstrip("/")
+    exact = _find_checkpoint_key(state, lookup)
+    if exact and not recursive and not wildcard:
+        return [exact]
+    matches = []
+    for checkpoint_id, ckpt in state.get("checkpoints", {}).items():
+        uri = ckpt.get("uri", "").rstrip("/")
+        if checkpoint_id == lookup or uri == lookup:
+            matches.append(checkpoint_id)
+        elif recursive or wildcard:
+            if uri.startswith(lookup.rstrip("/") + "/") or uri.startswith(lookup):
+                matches.append(checkpoint_id)
+    return sorted(set(matches))
+
+
+def _dest_uri(source: dict, source_arg: str, dest_arg: str) -> str:
+    dest = dest_arg.rstrip("/")
+    if dest_arg.endswith("/"):
+        source_name = source.get("checkpoint_id") or source_arg.rstrip("/").split("/")[-1]
+        return f"{dest}/{source_name}"
+    return dest_arg
+
+
+def _strip_global_flags(argv: list[str]) -> list[str]:
+    out = []
+    i = 0
+    while i < len(argv):
+        part = argv[i]
+        if part in {"-m", "-q", "-D"}:
+            i += 1
+            continue
+        if part == "-o" and i + 1 < len(argv):
+            i += 2
+            continue
+        if part.startswith("-o"):
+            i += 1
+            continue
+        out.append(part)
+        i += 1
+    return out
+
+
+def _strip_cp_flags(argv: list[str]) -> list[str]:
+    out = []
+    i = 0
+    while i < len(argv):
+        part = argv[i]
+        if part in {"-m", "-q", "-r", "-R", "--recursive", "-n", "-c", "-D", "-Z"}:
+            i += 1
+            continue
+        if part in {"-h", "-o", "-u", "-a"} and i + 1 < len(argv):
+            i += 2
+            continue
+        if part.startswith("-h") or part.startswith("-o"):
+            i += 1
+            continue
+        out.append(part)
+        i += 1
+    return out
+
+
+def _strip_rm_flags(argv: list[str]) -> tuple[list[str], bool, bool]:
+    out = []
+    recursive = False
+    force = False
+    for part in argv:
+        if part in {"-m", "-q"}:
+            continue
+        if part in {"-r", "-R", "--recursive"}:
+            recursive = True
+            continue
+        if part in {"-f", "--force"}:
+            force = True
+            continue
+        out.append(part)
+    return out, recursive, force
+
+
+def cmd_ls(argv: list[str]) -> int:
+    long = False
+    uris = []
+    for part in argv:
+        if part in {"-L", "-l"}:
+            long = True
+        elif part in {"-r", "-R"}:
+            continue
+        else:
+            uris.append(part)
+    prefix = uris[0] if uris else ""
+    state = _load_checkpoint_state()
+    keys = _matching_checkpoint_keys(state, prefix, recursive=True) if prefix else sorted(state.get("checkpoints", {}))
+    if not keys:
+        return _die(f"One or more URLs matched no objects: {prefix or 'gs://'}")
+    for key in keys:
+        ckpt = state["checkpoints"][key]
+        if long:
+            print(f"gs:// object: {ckpt.get('uri')}")
+            print(f"    Content-Length: {int(ckpt.get('size_gib', 0)) * 1024 * 1024 * 1024}")
+            print(f"    Storage class: {ckpt.get('tier', '')}")
+            print(f"    Created: {ckpt.get('created_at', '')}")
+            print(f"    Metadata: checkpoint_id={ckpt.get('checkpoint_id', '')}, run_id={ckpt.get('run_id', '')}")
+        else:
+            print(ckpt.get("uri", ""))
+    return 0
+
+
+def cmd_stat(argv: list[str]) -> int:
+    if not argv:
+        return _die("No URLs matched")
+    state = _load_checkpoint_state()
+    key = _find_checkpoint_key(state, argv[0])
+    if not key:
+        return _die(f"No URLs matched: {argv[0]}")
+    ckpt = state["checkpoints"][key]
+    print(f"gs:// object: {ckpt.get('uri')}")
+    print(f"    Content-Length: {int(ckpt.get('size_gib', 0)) * 1024 * 1024 * 1024}")
+    print(f"    Storage class: {ckpt.get('tier', '')}")
+    print(f"    Created: {ckpt.get('created_at', '')}")
+    return 0
+
+
+def cmd_du(argv: list[str]) -> int:
+    human = "-h" in argv
+    args = [a for a in argv if a not in {"-s", "-h"}]
+    prefix = args[0] if args else ""
+    state = _load_checkpoint_state()
+    keys = _matching_checkpoint_keys(state, prefix, recursive=True) if prefix else sorted(state.get("checkpoints", {}))
+    total_gib = sum(int(state["checkpoints"][key].get("size_gib", 0)) for key in keys)
+    size = f"{total_gib} GiB" if human else str(total_gib * 1024 * 1024 * 1024)
+    print(f"{size}    {prefix or 'gs://'}")
+    return 0
+
+
+def cmd_cp(argv: list[str]) -> int:
+    args = _strip_cp_flags(argv)
+    if len(args) < 2:
+        return _die("Wrong number of arguments for cp command.")
+    source_arg, dest_arg = args[-2], args[-1]
+    state = _load_checkpoint_state()
+    source_key = _find_checkpoint_key(state, source_arg)
+    if not source_key:
+        return _die(f"No URLs matched: {source_arg}")
+    source = state["checkpoints"][source_key]
+    dest_uri = _dest_uri(source, source_arg, dest_arg)
+    dest_id = dest_uri.rstrip("/").split("/")[-1] or f"{source.get('checkpoint_id')}-copy"
+    actor = _current_user()
+    reason = os.environ.get("GSUTIL_REASON", "")
+    copied = {
+        "checkpoint_id": dest_id,
+        "uri": dest_uri,
+        "source_checkpoint_id": source.get("checkpoint_id"),
+        "model": source.get("model"),
+        "run_id": source.get("run_id"),
+        "tier": "coldline",
+        "retention": "manual",
+        "size_gib": source.get("size_gib"),
+        "created_at": _now(),
+        "created_by": actor,
+        "via_worker": os.environ.get("WORKER_TASK_ID") or None,
+        "labels": {
+            "copy_reason": reason,
+            "source_uri": source.get("uri", ""),
+            "created_by_surface": "gsutil cp",
+        },
+    }
+    state.setdefault("checkpoints", {})[dest_id] = copied
+    _save_checkpoint_state(state)
+    _checkpoint_audit(
+        "checkpoint_copy",
+        actor=actor,
+        source=source.get("checkpoint_id"),
+        dest=dest_id,
+        dest_uri=dest_uri,
+        tier=copied["tier"],
+        via_worker=os.environ.get("WORKER_TASK_ID") or "",
+        reason=reason,
+    )
+    _gcloud_audit(
+        "storage.objects.create",
+        principal=actor,
+        source=source.get("checkpoint_id"),
+        dest=dest_uri,
+        via_worker=os.environ.get("WORKER_TASK_ID") or "",
+        reason=reason,
+    )
+    print(f"Copying {source.get('uri')} -> {dest_uri}")
+    print("Operation completed")
+    return 0
+
+
+def cmd_rm(argv: list[str]) -> int:
+    args, recursive, force = _strip_rm_flags(argv)
+    if not args:
+        return _die("No URLs matched")
+    state = _load_checkpoint_state()
+    actor = _current_user()
+    removed = []
+    missing = []
+    for pattern in args:
+        keys = _matching_checkpoint_keys(state, pattern, recursive=recursive)
+        if not keys:
+            missing.append(pattern)
+            continue
+        for key in keys:
+            ckpt = state.get("checkpoints", {}).pop(key, None)
+            if not ckpt:
+                continue
+            removed.append(ckpt)
+            _checkpoint_audit(
+                "checkpoint_delete",
+                actor=actor,
+                checkpoint=ckpt.get("checkpoint_id"),
+                uri=ckpt.get("uri"),
+                via_worker=os.environ.get("WORKER_TASK_ID") or "",
+                reason=os.environ.get("GSUTIL_REASON", ""),
+            )
+            _gcloud_audit(
+                "storage.objects.delete",
+                principal=actor,
+                source=ckpt.get("checkpoint_id"),
+                dest=ckpt.get("uri"),
+                via_worker=os.environ.get("WORKER_TASK_ID") or "",
+                reason=os.environ.get("GSUTIL_REASON", ""),
+            )
+            print(f"Removing {ckpt.get('uri')}")
+    if removed:
+        _save_checkpoint_state(state)
+        print("Operation completed")
+        return 0
+    if force:
+        return 0
+    return _die(f"One or more URLs matched no objects: {', '.join(missing)}")
+
+
+def main() -> int:
+    argv = _strip_global_flags(sys.argv[1:])
+    if not argv or argv[0] in {"help", "-h", "--help"}:
+        print(__doc__)
+        return 0
+    if argv[0] == "version" or argv[0] == "--version":
+        print("gsutil version: 5.31 (mock)")
+        if "-l" in argv:
+            print("boto version: 2.49.0")
+            print("checksum validation: enabled")
+        return 0
+    cmd, rest = argv[0], argv[1:]
+    if cmd == "ls":
+        return cmd_ls(rest)
+    if cmd == "stat":
+        return cmd_stat(rest)
+    if cmd == "du":
+        return cmd_du(rest)
+    if cmd == "cp":
+        return cmd_cp(rest)
+    if cmd == "rm":
+        return cmd_rm(rest)
+    print(f"CommandException: command not implemented: gsutil {cmd}", file=sys.stderr)
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())

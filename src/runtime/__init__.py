@@ -6,6 +6,44 @@ from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 
+# Tool functions for which positional ("ordered") fallback pairing of a tool
+# RESULT to its originating tool CALL is safe — read/inspect/file/shell tools
+# that are deterministic and order-stable, so zipping calls to results in order
+# can't attach a result to the wrong command. Tool names differ per scaffold,
+# so this set spans all three runtimes we drive:
+#   - Gemini CLI: snake_case (run_shell_command, read_file, …)
+#   - Claude Code: PascalCase (Bash, Read, Edit, …) — note CC/Codex use `Bash`,
+#     not `run_shell_command`
+#   - Codex CLI: `shell` for command execution
+# Shared here (rather than duplicated in runtime/scaffold.py and transcript.py)
+# so the live-pairing path and the post-hoc transcript path stay in lockstep.
+# Anything not in this set falls back to a placeholder rather than risk pairing
+# a result to the wrong call.
+SAFE_ORDERED_RESULT_FUNCTIONS: set[str] = {
+    # Gemini CLI
+    "read_file",
+    "list_directory",
+    "grep_search",
+    "glob",
+    "write_file",
+    "replace",
+    "web_fetch",
+    "run_shell_command",
+    # Claude Code
+    "Bash",
+    "Read",
+    "LS",
+    "Glob",
+    "Grep",
+    "Write",
+    "Edit",
+    "MultiEdit",
+    "WebFetch",
+    # Codex CLI
+    "shell",
+}
+
+
 @dataclass
 class TargetToolCall:
     """One tool call the target made during a turn.

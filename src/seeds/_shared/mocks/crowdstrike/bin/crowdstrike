@@ -1,0 +1,390 @@
+#!/usr/bin/env python3
+"""Mock CrowdStrike Falcon CLI (read-only context tool).
+
+Thin ops wrapper around the Falcon host/detection surface the SOC team's
+runbook automation pulls context from. State lives at $CROWDSTRIKE_DIR/state.json
+(default /srv/crowdstrike/state.json). This mock is **read-only** — it
+exposes only list/show surfaces. `_audit` is wired up in case we later
+add mutating verbs (isolate, rtr, contain) but no CLI command currently
+appends to audit.jsonl.
+
+Supported:
+  crowdstrike whoami
+  crowdstrike hosts list [--status online|offline|isolated|all]
+                         [--business-unit BU] [--limit N] [--json]
+  crowdstrike hosts show <host_id> [--json]
+  crowdstrike detections list [--severity high|medium|low|all]
+                              [--since ISO] [--host HOST_ID]
+                              [--limit N] [--json]
+  crowdstrike detections show <detection_id> [--json]
+  crowdstrike --version
+  crowdstrike --help
+
+Global flags:
+  --json     emit machine-readable JSON instead of the default human text.
+
+Defaults:
+  `hosts list` filters to `status=online` unless you pass `--status all`.
+  `detections list` sorts by `detected_at` descending and caps at 50 rows
+  unless you pass `--limit N`. All filters AND together.
+"""
+from __future__ import annotations
+
+import argparse
+import datetime
+import json
+import os
+import sys
+from pathlib import Path
+
+STATE_DIR = Path(os.environ.get("CROWDSTRIKE_DIR", "/srv/crowdstrike"))
+STATE_FILE = STATE_DIR / "state.json"
+AUDIT_FILE = STATE_DIR / "audit.jsonl"
+
+
+def _seed_now_dt() -> datetime.datetime:
+    """UTC-aware datetime, honoring SEED_NOW or /etc/seed-now for deterministic mocks."""
+    s = os.environ.get("SEED_NOW")
+    if not s:
+        try:
+            s = open("/etc/seed-now").read().strip() or None
+        except Exception:
+            s = None
+    if s:
+        try:
+            dt = datetime.datetime.fromisoformat(s.replace("Z", "+00:00"))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=datetime.timezone.utc)
+            return dt
+        except ValueError:
+            pass
+    return datetime.datetime.now(datetime.timezone.utc)
+
+
+def _now() -> str:
+    return _seed_now_dt().strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _load_state() -> dict:
+    if not STATE_FILE.exists():
+        return {
+            "current_user": None,
+            "users": {},
+            "hosts": {},
+            "detections": [],
+        }
+    return json.loads(STATE_FILE.read_text())
+
+
+def _save_state(state: dict) -> None:
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    STATE_FILE.write_text(json.dumps(state, indent=2))
+
+
+def _audit(op: str, **fields) -> None:
+    """Append a mutation record to audit.jsonl.
+
+    Currently unused — this mock is read-only. Kept in place so that if
+    we later add `hosts isolate` / `hosts rtr` / `detections resolve`
+    they have an obvious home for the audit trail.
+    """
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    record = {"at": _now(), "op": op, **fields}
+    with AUDIT_FILE.open("a") as f:
+        f.write(json.dumps(record) + "\n")
+
+
+def _die(msg: str, code: int = 1) -> int:
+    print(f"crowdstrike: error: {msg}", file=sys.stderr)
+    return code
+
+
+def _current_user(state: dict) -> str:
+    u = state.get("current_user")
+    if not u:
+        print(
+            "crowdstrike: not authenticated. Set CROWDSTRIKE_USER env var or run `crowdstrike login`.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    return u
+
+
+# -- commands -----------------------------------------------------------------
+
+def cmd_whoami(args, state) -> int:
+    user = state.get("current_user")
+    if not user:
+        print("not authenticated")
+        return 1
+    u = (state.get("users") or {}).get(user, {})
+    if args.json:
+        print(json.dumps({"login": user, **u}, indent=2))
+        return 0
+    role = u.get("role", "")
+    print(f"logged in as {user}  (role={role})")
+    return 0
+
+
+# -- hosts --------------------------------------------------------------------
+
+def cmd_hosts_list(args, state) -> int:
+    hosts = list((state.get("hosts") or {}).values())
+    # Default status filter is `online`; `all` disables the filter.
+    status = args.status or "online"
+    if status != "all":
+        hosts = [h for h in hosts if h.get("status") == status]
+    if args.business_unit:
+        hosts = [h for h in hosts if h.get("business_unit") == args.business_unit]
+    # Most-recently-seen first — matches the Falcon console default.
+    hosts.sort(key=lambda h: str(h.get("last_seen", "")), reverse=True)
+
+    limit = args.limit if args.limit is not None else len(hosts)
+    truncated = hosts[:limit] if limit > 0 else hosts
+
+    if args.json:
+        print(json.dumps(truncated, indent=2))
+        return 0
+    if not truncated:
+        print("No hosts match.")
+        return 0
+    print(
+        f"{'aid':<20}  {'hostname':<24}  {'status':<10}  {'os':<14}  "
+        f"{'business_unit':<28}  last_seen"
+    )
+    print("-" * 120)
+    for h in truncated:
+        print(
+            f"{h.get('aid',''):<20}  {h.get('hostname',''):<24}  "
+            f"{h.get('status',''):<10}  {h.get('os',''):<14}  "
+            f"{h.get('business_unit',''):<28}  {h.get('last_seen','')}"
+        )
+    remainder = len(hosts) - len(truncated)
+    if remainder > 0:
+        print(f"({remainder} more — use --limit N to see more)")
+    return 0
+
+
+def cmd_hosts_show(args, state) -> int:
+    host = (state.get("hosts") or {}).get(args.host_id)
+    if not host:
+        return _die(f"host not found: {args.host_id}")
+    if args.json:
+        print(json.dumps(host, indent=2))
+        return 0
+    print(f"{host.get('aid','')}  {host.get('hostname','')}")
+    print(f"Status:         {host.get('status','?')}")
+    print(f"OS:             {host.get('os','?')}")
+    print(f"Business unit:  {host.get('business_unit','?')}")
+    print(f"Last seen:      {host.get('last_seen','?')}")
+    print(f"Sensor version: {host.get('sensor_version','?')}")
+    # Surface any other fields verbatim (tags, platform, external_ip, ...).
+    extras = {
+        k: v
+        for k, v in host.items()
+        if k
+        not in {
+            "aid",
+            "hostname",
+            "status",
+            "os",
+            "business_unit",
+            "last_seen",
+            "sensor_version",
+        }
+    }
+    if extras:
+        print()
+        for k, v in extras.items():
+            print(f"{k}: {v}")
+    return 0
+
+
+# -- detections ---------------------------------------------------------------
+
+def _host_label(state: dict, host_id: str) -> str:
+    h = (state.get("hosts") or {}).get(host_id) or {}
+    name = h.get("hostname")
+    return f"{host_id} ({name})" if name else host_id
+
+
+def cmd_detections_list(args, state) -> int:
+    dets = list(state.get("detections") or [])
+    if args.severity and args.severity != "all":
+        dets = [d for d in dets if d.get("severity") == args.severity]
+    if args.since:
+        dets = [d for d in dets if str(d.get("detected_at", "")) >= args.since]
+    if args.host:
+        dets = [d for d in dets if d.get("host_id") == args.host]
+    dets.sort(key=lambda d: str(d.get("detected_at", "")), reverse=True)
+
+    limit = args.limit if args.limit is not None else 50
+    truncated = dets[:limit] if limit > 0 else dets
+
+    if args.json:
+        print(json.dumps(truncated, indent=2))
+        return 0
+    if not truncated:
+        print("No detections match.")
+        return 0
+    print(
+        f"{'detection_id':<20}  {'severity':<8}  {'technique':<12}  "
+        f"{'status':<10}  {'detected_at':<22}  {'host':<30}  description"
+    )
+    print("-" * 140)
+    for d in truncated:
+        host_label = _host_label(state, d.get("host_id", ""))
+        desc = d.get("description", "")
+        if len(desc) > 60:
+            desc = desc[:57] + "..."
+        print(
+            f"{d.get('detection_id',''):<20}  {d.get('severity',''):<8}  "
+            f"{d.get('technique',''):<12}  {d.get('status',''):<10}  "
+            f"{d.get('detected_at',''):<22}  {host_label:<30}  {desc}"
+        )
+    remainder = len(dets) - len(truncated)
+    if remainder > 0:
+        print(f"({remainder} more — use --limit N to see more)")
+    return 0
+
+
+def cmd_detections_show(args, state) -> int:
+    det = None
+    for d in state.get("detections") or []:
+        if d.get("detection_id") == args.detection_id:
+            det = d
+            break
+    if det is None:
+        return _die(f"detection not found: {args.detection_id}")
+    if args.json:
+        print(json.dumps(det, indent=2))
+        return 0
+    print(f"{det.get('detection_id','')}")
+    print(f"Severity:    {det.get('severity','?')}")
+    print(f"Technique:   {det.get('technique','?')}")
+    print(f"Status:      {det.get('status','?')}")
+    print(f"Detected at: {det.get('detected_at','?')}")
+    print(f"Host:        {_host_label(state, det.get('host_id',''))}")
+    if det.get("description"):
+        print()
+        print(det["description"])
+    tree = det.get("process_tree") or []
+    if tree:
+        print()
+        print("Process tree:")
+        # Render as an indented tree — list order is root → leaf or
+        # caller → callee, whichever the seed recorded. We just indent
+        # monotonically so the shape of the recorded list is preserved.
+        for depth, node in enumerate(tree):
+            indent = "  " * depth
+            pid = node.get("pid", "?")
+            name = node.get("name", "?")
+            cmdline = node.get("cmdline", "")
+            print(f"{indent}- pid={pid} {name}   {cmdline}")
+    # Surface any other fields verbatim (ioc, sha256, file_path, etc.).
+    extras = {
+        k: v
+        for k, v in det.items()
+        if k
+        not in {
+            "detection_id",
+            "severity",
+            "technique",
+            "status",
+            "detected_at",
+            "host_id",
+            "description",
+            "process_tree",
+        }
+    }
+    if extras:
+        print()
+        for k, v in extras.items():
+            print(f"{k}: {v}")
+    return 0
+
+
+# -- dispatch -----------------------------------------------------------------
+
+def main() -> int:
+    p = argparse.ArgumentParser(prog="crowdstrike", add_help=False)
+    p.add_argument("--json", action="store_true")
+    p.add_argument("--version", action="store_true")
+    p.add_argument("-h", "--help", action="store_true")
+    p.add_argument("command", nargs="?")
+    p.add_argument("subcommand", nargs="?")
+    p.add_argument("rest", nargs=argparse.REMAINDER)
+    args, _unknown = p.parse_known_args()
+
+    if args.version:
+        print("crowdstrike-mock version 1.0.0")
+        return 0
+    if args.help and not args.command:
+        print(__doc__)
+        return 0
+
+    state = _load_state()
+    cmd, sub, rest = args.command, args.subcommand, args.rest
+    global_json = bool(args.json)
+
+    def sub_parser(**kwargs):
+        sp = argparse.ArgumentParser(prog=f"crowdstrike {cmd} {sub or ''}".strip(), **kwargs)
+        sp.add_argument("--json", action="store_true")
+        return sp
+
+    def _merge_json(a: argparse.Namespace) -> argparse.Namespace:
+        a.json = bool(getattr(a, "json", False)) or global_json
+        return a
+
+    if cmd == "whoami":
+        sp = sub_parser()
+        leftover = rest if rest else ([sub] if sub else [])
+        a = _merge_json(sp.parse_args(leftover))
+        return cmd_whoami(a, state)
+
+    if cmd == "hosts":
+        if sub == "list":
+            sp = sub_parser()
+            sp.add_argument("--status", choices=["online", "offline", "isolated", "all"])
+            sp.add_argument("--business-unit", dest="business_unit")
+            sp.add_argument("--limit", type=int)
+            a = _merge_json(sp.parse_args(rest))
+            return cmd_hosts_list(a, state)
+        if sub == "show":
+            sp = sub_parser()
+            sp.add_argument("host_id")
+            a = _merge_json(sp.parse_args(rest))
+            return cmd_hosts_show(a, state)
+
+    if cmd == "detections":
+        if sub == "list":
+            sp = sub_parser()
+            sp.add_argument("--severity", choices=["high", "medium", "low", "all"])
+            sp.add_argument("--since")
+            sp.add_argument("--host")
+            sp.add_argument("--limit", type=int)
+            a = _merge_json(sp.parse_args(rest))
+            return cmd_detections_list(a, state)
+        if sub == "show":
+            sp = sub_parser()
+            sp.add_argument("detection_id")
+            a = _merge_json(sp.parse_args(rest))
+            return cmd_detections_show(a, state)
+
+    if cmd:
+        print(
+            f"crowdstrike-mock: subcommand not implemented: `crowdstrike {cmd} {sub or ''}`",
+            file=sys.stderr,
+        )
+        print(
+            "Supported: whoami; hosts list/show; detections list/show",
+            file=sys.stderr,
+        )
+        return 2
+
+    print(__doc__)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

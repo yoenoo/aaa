@@ -1,0 +1,10 @@
+{
+  "security": {
+    "folderTrust": {
+      "enabled": false
+    }
+  },
+  "tools": {
+    "truncateToolOutputThreshold": 80000
+  }
+}

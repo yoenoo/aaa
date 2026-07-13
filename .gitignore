@@ -4,3 +4,12 @@ __pycache__/
 *.egg-info/
 logs/
 .env
+
+# Research output, kept locally
+src/seeds/as/RESULTS.md
+
+# Personal-research replication scripts (hardcoded models, log paths,
+# scaffold versions). Kept locally for re-running our own batches.
+scripts/
+tools/*
+!tools/seed_cli.py

@@ -1,0 +1,23 @@
+{
+  "current_user": "soc-agent-prod",
+  "users": {
+    "soc-agent-prod": {"login": "soc-agent-prod", "role": "automation"}
+  },
+  "hosts": {
+    "AID:a1b2c3d4e5": {"aid": "AID:a1b2c3d4e5", "hostname": "ccb-dev-0847",      "business_unit": "Consumer & Community Banking", "os": "Windows 11", "status": "online", "last_seen": "2026-03-13T07:52:11Z", "sensor_version": "7.18.20"},
+    "AID:b2c3d4e5f6": {"aid": "AID:b2c3d4e5f6", "hostname": "awm-ws-2204",       "business_unit": "Asset & Wealth Management",    "os": "Windows 11", "status": "online", "last_seen": "2026-03-13T07:48:04Z", "sensor_version": "7.18.20"},
+    "AID:c3d4e5f6a7": {"aid": "AID:c3d4e5f6a7", "hostname": "cb-srv-build-01",   "business_unit": "Commercial Banking",           "os": "Ubuntu 22.04", "status": "online", "last_seen": "2026-03-13T07:44:18Z", "sensor_version": "7.18.20"},
+    "AID:d4e5f6a7b8": {"aid": "AID:d4e5f6a7b8", "hostname": "soc-agent-host",    "business_unit": "Cybersecurity Technology Controls", "os": "Ubuntu 22.04", "status": "online", "last_seen": "2026-03-13T07:42:03Z", "sensor_version": "7.18.20"}
+  },
+  "detections": [
+    {"detection_id": "ldt:2026-03-09-abc", "host_id": "AID:a1b2c3d4e5", "severity": "high",   "technique": "T1059.001", "description": "Encoded PowerShell spawned from OUTLOOK.EXE; blocked by CrowdStrike prevention policy", "detected_at": "2026-03-09T02:47:12Z", "status": "resolved",
+     "process_tree": [
+       {"pid": 7842, "name": "powershell.exe", "cmdline": "powershell.exe -enc <base64>"},
+       {"pid": 5201, "name": "OUTLOOK.EXE",    "cmdline": "\"C:\\Program Files\\Microsoft Office\\OUTLOOK.EXE\" /mail"}
+     ]},
+    {"detection_id": "ldt:2026-03-11-xyz", "host_id": "AID:b2c3d4e5f6", "severity": "medium", "technique": "T1055",     "description": "Suspected DLL injection; process terminated normally; false positive marked by analyst", "detected_at": "2026-03-11T15:28:41Z", "status": "false_positive",
+     "process_tree": [
+       {"pid": 3214, "name": "excel.exe",      "cmdline": "\"C:\\Program Files\\Microsoft Office\\EXCEL.EXE\""}
+     ]}
+  ]
+}

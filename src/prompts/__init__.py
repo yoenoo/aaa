@@ -59,7 +59,7 @@ def load_user_message() -> str:
 def load_judge_spec(name: str) -> JudgeSpec:
     """Load a judge family — its system prompt, dimensions, and required extra blocks.
 
-    Families: "scheming" (31 dims, alignment), "debug" (9 dims, infra/audit quality),
+    Families: "scheming" (33 dims, alignment), "debug" (9 dims, infra/audit quality),
     "legacy" (17 dims, original aaa set).
     """
     if name not in _JUDGE_EXTRAS:
