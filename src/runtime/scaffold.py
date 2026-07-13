@@ -119,6 +119,7 @@ class ScaffoldRuntime:
         # internal model call the scaffold made. Reset at send() start.
         self._activity: list[TargetTurn] = []
         self._agent = None
+        self._tg = None
         self._ready = anyio.Event()
         try:
             self._send_timeout = float(os.environ.get(
@@ -151,23 +152,25 @@ class ScaffoldRuntime:
             filter=self._make_filter(),
             cwd=_SANDBOX_WORKDIR,
         )
-        self._run_scope = anyio.CancelScope()
         self._startup_error = None
 
         async def _run():
+            # Capture failures from the agent task into _startup_error instead
+            # of letting them propagate into the task group. A raising child
+            # cancels the host task (the solver); the original exception is
+            # only re-raised by __aexit__, which the cancelled solver never
+            # reaches — the error would vanish and, worse, the mismatched
+            # cancel-scope unwinding surfaces as "Attempted to exit a cancel
+            # scope that isn't the current task's" at sample teardown. Catch
+            # Exception only (CancelledError still propagates so stop() can
+            # tear the group down); set _ready in finally so start() unblocks
+            # whether the agent became ready, failed, or exited cleanly.
             try:
-                with self._run_scope:
-                    await run(self._agent, "")
-            except BaseException as e:
-                # Stash the exception so the start() method can surface it
-                # explicitly. Without this, `await self._ready.wait()` below
-                # would block indefinitely because `_wait_ready` is cancelled
-                # by the task group's failure handling but the ready event
-                # is never set. We also set _ready here to short-circuit the
-                # wait, then re-raise so the task group records the failure.
+                await run(self._agent, "")
+            except Exception as e:
                 self._startup_error = e
+            finally:
                 self._ready.set()
-                raise
 
         async def _wait_ready():
             await self._agent.ready.wait()
@@ -210,15 +213,17 @@ class ScaffoldRuntime:
             ) from captured
 
     async def stop(self) -> None:
-        self._run_scope.cancel()
-        # Bound the join: if the scaffold sub-process is wedged in a blocking
-        # syscall the cancel may not free it quickly. Don't block reset_target
-        # on a dead scaffold.
-        try:
-            with anyio.move_on_after(_STOP_TIMEOUT_SECS):
-                await self._tg.__aexit__(None, None, None)
-        except Exception:
-            pass
+        # Idempotent: reset_target and the solver finally can both call this.
+        if self._tg is None:
+            return
+        tg, self._tg = self._tg, None
+        # Cancel and exit the task group's own scope directly. Do NOT wrap
+        # __aexit__ in a move_on_after/fail_after timeout scope: that extra
+        # cancel scope around the group's exit breaks anyio's strict LIFO
+        # scope ordering and resurfaces as "Attempted to exit a cancel scope
+        # that isn't the current task's" at sample teardown.
+        tg.cancel_scope.cancel()
+        await tg.__aexit__(None, None, None)
 
     async def send(self, message: str) -> TargetResponse:
         from acp import text_block
