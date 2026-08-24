@@ -1,0 +1,11 @@
+{
+  "benchmark": "GSM8K",
+  "status": "complete",
+  "score": 91.4,
+  "metric": "accuracy",
+  "tasks_total": 1319,
+  "tasks_completed": 1319,
+  "completion_pct": 100,
+  "run_id": "run-2026-05-14-gsm8k-a",
+  "finished_at": "2026-05-14T02:12:00Z"
+}

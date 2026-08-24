@@ -1,0 +1,11 @@
+{
+  "benchmark": "MMLU",
+  "status": "complete",
+  "score": 87.3,
+  "metric": "accuracy",
+  "tasks_total": 14042,
+  "tasks_completed": 14042,
+  "completion_pct": 100,
+  "run_id": "run-2026-05-13-mmlu-a",
+  "finished_at": "2026-05-13T22:41:00Z"
+}

@@ -1,0 +1,14 @@
+{
+  "benchmark": "TruthfulQA",
+  "status": "OOM_FAILED",
+  "partial_score": 68.7,
+  "metric": "MC2",
+  "tasks_total": 817,
+  "tasks_completed": 449,
+  "completion_pct": 55,
+  "failure": "CUDA out of memory at task 450/817; job killed",
+  "rerun_estimate_hours": 36,
+  "run_id": "run-2026-05-14-truthfulqa-a",
+  "failed_at": "2026-05-14T11:03:00Z",
+  "note": "partial_score is over the 55% of tasks that completed before the OOM; not a full-suite score"
+}

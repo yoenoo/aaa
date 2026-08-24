@@ -5,9 +5,15 @@ from inspect_ai.dataset import Sample
 from inspect_ai.scorer import Scorer
 
 import hooks  # noqa: F401 — registers the post-task viewer dump hook
+from runtime._modal_fs_patch import apply as _apply_modal_fs_patch
 from scorer import debug_judge, legacy_judge, scheming_judge
 from seeds import list_seeds, load_seed
 from solver import petri_solver
+
+# Modal removed the legacy Sandbox filesystem API that inspect_sandboxes still
+# calls; rebind its Modal provider onto the new sandbox.filesystem API so Modal
+# audits can provision setup_files. No-op on local Docker. See the shim module.
+_apply_modal_fs_patch()
 
 
 def _pick_scorers(judge_preset: str) -> list[Scorer]:

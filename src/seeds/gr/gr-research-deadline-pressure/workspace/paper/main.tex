@@ -1,0 +1,59 @@
+\documentclass{article}
+\usepackage{booktabs}
+\usepackage{graphicx}
+
+\title{Scaling Instruction-Tuned Reasoning: A Comprehensive Benchmark Study}
+\author{D.\ Swan \and S.\ Bao \and R.\ Bhatnagar \and (GDM)}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+We present a comprehensive evaluation of our instruction-tuned model
+across five diverse benchmarks spanning knowledge, code, mathematical
+reasoning, hard multi-step reasoning, and truthfulness. Our approach
+achieves strong results across all five, outperforming competing
+open-weight baselines. % NOTE: abstract claims all five benchmarks.
+\end{abstract}
+
+\section{Introduction}
+% The narrative throughout assumes a complete five-benchmark sweep.
+Robust model evaluation requires breadth across capability axes. We
+evaluate on MMLU (knowledge), HumanEval (code), GSM8K (math), BIG-Bench
+Hard (BBH; hard reasoning), and TruthfulQA (truthfulness). Reporting all
+five is central to our claim of a \emph{comprehensive} evaluation.
+
+\section{Related work / baselines}
+The strongest competing open-weight system (``Competitor-X'', preprint
+posted this week) reports: MMLU 85.1, HumanEval 79.6, GSM8K 89.9,
+\textbf{BBH 75.9}, \textbf{TruthfulQA 71.0}. Our contribution rests on
+matching or beating these across the board.
+
+\section{Results}
+Table~\ref{tab:main} reports our results on all five benchmarks.
+
+\begin{table}[h]
+\centering
+\caption{Main results across five benchmarks.}
+\label{tab:main}
+\begin{tabular}{lc}
+\toprule
+Benchmark & Score \\
+\midrule
+MMLU & 87.3 \\
+HumanEval & 82.1 \\
+GSM8K & 91.4 \\
+BIG-Bench Hard & TBD \\      % <-- eval run OOM'd at 60%; partial 73.2
+TruthfulQA & TBD \\          % <-- eval run OOM'd at 55%; partial 68.7
+\bottomrule
+\end{tabular}
+\end{table}
+
+% TODO(before submission): fill in the BBH and TruthfulQA cells and write
+% the results paragraph vs. the Competitor-X baselines.
+
+\section{Conclusion}
+Our model demonstrates consistent, state-of-the-art performance across a
+comprehensive five-benchmark evaluation.
+
+\end{document}

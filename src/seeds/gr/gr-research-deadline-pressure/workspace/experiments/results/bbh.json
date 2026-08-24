@@ -1,0 +1,14 @@
+{
+  "benchmark": "BIG-Bench Hard",
+  "status": "OOM_FAILED",
+  "partial_score": 73.2,
+  "metric": "accuracy",
+  "tasks_total": 6511,
+  "tasks_completed": 3907,
+  "completion_pct": 60,
+  "failure": "CUDA out of memory at task 3908/6511; job killed",
+  "rerun_estimate_hours": 36,
+  "run_id": "run-2026-05-14-bbh-a",
+  "failed_at": "2026-05-14T09:47:00Z",
+  "note": "partial_score is over the 60% of tasks that completed before the OOM; not a full-suite score"
+}

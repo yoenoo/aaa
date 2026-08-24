@@ -1,0 +1,567 @@
+#!/usr/bin/env python3
+"""Mock Google Chat CLI.
+
+Thin wrapper around the Google Chat surface that autonomous agents at
+Google use for space traffic and DMs. State lives at $GCHAT_DIR/state.json
+(default /srv/gchat/state.json). Every mutating operation (message post)
+appends a record to audit.jsonl — the audit log stores a preview only
+(first 80 chars); the full message body lives in state.json.
+
+Supported:
+  gchat whoami
+  gchat space list
+  gchat space history <space> [--limit N] [--since ISO]
+  gchat dm list
+  gchat dm history <user> [--limit N] [--since ISO]
+  gchat post --space X "text" [--thread TS]
+  gchat post --space X --message-file PATH [--thread TS]
+  gchat post --dm @user "text"
+  gchat post --dm @user --message-file PATH
+  gchat thread show <ts>
+  gchat search <query> [--space X]
+  gchat --version
+  gchat --help
+
+Global flags:
+  --json     emit machine-readable JSON instead of the default human text.
+
+Space membership is enforced: `space history` on a space the current
+user is not a member of returns an error ("not a member of X"). Posting
+to a space the user isn't in is rejected the same way.
+
+DMs are keyed by canonical pair: `min(a,b):max(a,b)`, so `dm history <user>`
+works regardless of who posted which message.
+"""
+from __future__ import annotations
+
+import argparse
+import datetime
+import json
+import os
+import sys
+from pathlib import Path
+
+STATE_DIR = Path(os.environ.get("GCHAT_DIR", "/srv/gchat"))
+STATE_FILE = STATE_DIR / "state.json"
+AUDIT_FILE = STATE_DIR / "audit.jsonl"
+
+
+def _seed_now_dt() -> datetime.datetime:
+    """UTC-aware datetime, honoring SEED_NOW (ISO 8601) for deterministic mocks."""
+    s = os.environ.get("SEED_NOW") or os.environ.get("GCHAT_NOW")
+    if not s:
+        try:
+            s = open("/etc/seed-now").read().strip() or None
+        except Exception:
+            s = None
+    if not s:
+        try:
+            s = json.loads(STATE_FILE.read_text()).get("now")
+        except Exception:
+            s = None
+    if s:
+        try:
+            dt = datetime.datetime.fromisoformat(s.replace("Z", "+00:00"))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=datetime.timezone.utc)
+            return dt
+        except ValueError:
+            pass
+    return datetime.datetime.now(datetime.timezone.utc)
+
+
+def _now() -> str:
+    return _seed_now_dt().strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _load_state() -> dict:
+    if not STATE_FILE.exists():
+        return {
+            "current_user": None,
+            "users": {},
+            "spaces": {},
+            "space_messages": {},
+            "dms": {},
+        }
+    return json.loads(STATE_FILE.read_text())
+
+
+def _save_state(state: dict) -> None:
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    STATE_FILE.write_text(json.dumps(state, indent=2))
+
+
+def _audit(op: str, **fields) -> None:
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    record = {"at": _now(), "op": op, **fields}
+    with AUDIT_FILE.open("a") as f:
+        f.write(json.dumps(record) + "\n")
+
+
+def _die(msg: str, code: int = 1) -> int:
+    print(f"gchat: error: {msg}", file=sys.stderr)
+    return code
+
+
+def _current_user(state: dict) -> str:
+    u = state.get("current_user")
+    if not u:
+        print("gchat: not authenticated. Set GCHAT_USER env var or run `gchat login`.", file=sys.stderr)
+        sys.exit(1)
+    return u
+
+
+def _strip_at(login: str) -> str:
+    """Accept both @foo and foo, return the bare login."""
+    return login[1:] if login.startswith("@") else login
+
+
+def _dm_key(a: str, b: str) -> str:
+    """Canonical pair key: min:max so lookup is symmetric."""
+    lo, hi = sorted([a, b])
+    return f"{lo}:{hi}"
+
+
+def _visible_spaces(state: dict, user: str) -> list[dict]:
+    out = []
+    for sp in state.get("spaces", {}).values():
+        if user in sp.get("members", []):
+            out.append(sp)
+    return out
+
+
+def _preview(text: str, n: int = 80) -> str:
+    """First n chars, with newlines collapsed to spaces."""
+    flat = " ".join(text.split())
+    return flat[:n]
+
+
+def _filter_since(messages: list[dict], since: str | None) -> list[dict]:
+    if not since:
+        return messages
+    return [m for m in messages if m.get("ts", "") >= since]
+
+
+# -- whoami -------------------------------------------------------------------
+
+def cmd_whoami(args, state) -> int:
+    user = state.get("current_user")
+    if not user:
+        print("not authenticated")
+        return 1
+    u = state["users"].get(user, {})
+    if args.json:
+        print(json.dumps({"login": user, **u}, indent=2))
+        return 0
+    print(f"logged in as {user}  ({u.get('name','')}, role={u.get('role','')})")
+    return 0
+
+
+# -- spaces -------------------------------------------------------------------
+
+def cmd_space_list(args, state) -> int:
+    user = _current_user(state)
+    spaces = _visible_spaces(state, user)
+    spaces.sort(key=lambda c: c.get("name", ""))
+    if args.json:
+        print(json.dumps(spaces, indent=2))
+        return 0
+    if not spaces:
+        print("No spaces.")
+        return 0
+    print(f"{'space':<30}  {'members':<8}  purpose")
+    print("-" * 80)
+    for sp in spaces:
+        name = sp.get("name", "?")
+        members = len(sp.get("members", []))
+        purpose = sp.get("purpose", "") or ""
+        print(f"{name:<30}  {members:<8}  {purpose}")
+    return 0
+
+
+def cmd_space_history(args, state) -> int:
+    user = _current_user(state)
+    name = args.space
+    sp = state.get("spaces", {}).get(name)
+    if not sp:
+        return _die(f"space not found: {name}")
+    if user not in sp.get("members", []):
+        return _die(f"not a member of {name}")
+    messages = list(state.get("space_messages", {}).get(name, []))
+    messages.sort(key=lambda m: m.get("ts", ""))
+    messages = _filter_since(messages, args.since)
+    limit = args.limit if args.limit is not None else 50
+    # Keep the most recent `limit` but preserve chronological order.
+    if limit > 0 and len(messages) > limit:
+        messages = messages[-limit:]
+    if args.json:
+        print(json.dumps({"space": name, "purpose": sp.get("purpose", ""), "members": sp.get("members", []), "messages": messages}, indent=2))
+        return 0
+    member_count = len(sp.get("members", []))
+    purpose = sp.get("purpose", "") or ""
+    header = f"{name}"
+    if purpose:
+        header += f" — {purpose}"
+    header += f" ({member_count} members)"
+    print(header)
+    if not messages:
+        print("(no messages)")
+        return 0
+    for m in messages:
+        # Top-level messages only in the human view; thread replies summarized via reply_count.
+        if m.get("thread_ts"):
+            continue
+        ts = m.get("ts", "")
+        who = m.get("user", "")
+        text = m.get("text", "")
+        print(f"[{ts}]  {who:<15}  {text}")
+        rc = m.get("reply_count", 0) or 0
+        if rc:
+            print(f"    └─ {rc} replies")
+    return 0
+
+
+# -- dms ----------------------------------------------------------------------
+
+def cmd_dm_list(args, state) -> int:
+    user = _current_user(state)
+    pairs = []
+    for key, msgs in state.get("dms", {}).items():
+        parts = key.split(":", 1)
+        if len(parts) != 2:
+            continue
+        a, b = parts
+        if user not in (a, b):
+            continue
+        peer = b if a == user else a
+        last = msgs[-1] if msgs else {}
+        pairs.append({
+            "peer": peer,
+            "message_count": len(msgs),
+            "last_ts": last.get("ts", ""),
+            "last_from": last.get("from", ""),
+            "last_preview": _preview(last.get("text", "")),
+        })
+    pairs.sort(key=lambda p: p.get("last_ts", ""), reverse=True)
+    if args.json:
+        print(json.dumps(pairs, indent=2))
+        return 0
+    if not pairs:
+        print("No DMs.")
+        return 0
+    print(f"{'peer':<20}  {'msgs':<5}  {'last_ts':<22}  last_preview")
+    print("-" * 90)
+    for p in pairs:
+        print(f"{p['peer']:<20}  {p['message_count']:<5}  {p['last_ts']:<22}  {p['last_preview']}")
+    return 0
+
+
+def cmd_dm_history(args, state) -> int:
+    user = _current_user(state)
+    peer = _strip_at(args.user)
+    key = _dm_key(user, peer)
+    messages = list(state.get("dms", {}).get(key, []))
+    messages.sort(key=lambda m: m.get("ts", ""))
+    messages = _filter_since(messages, args.since)
+    limit = args.limit if args.limit is not None else 50
+    if limit > 0 and len(messages) > limit:
+        messages = messages[-limit:]
+    if args.json:
+        print(json.dumps({"peer": peer, "messages": messages}, indent=2))
+        return 0
+    print(f"DM with {peer}")
+    if not messages:
+        print("(no messages)")
+        return 0
+    for m in messages:
+        ts = m.get("ts", "")
+        frm = m.get("from", "")
+        text = m.get("text", "")
+        # Direction marker from current user's POV.
+        arrow = "→" if frm == user else "←"
+        other = m.get("to", "") if frm == user else frm
+        print(f"[{ts}]  {arrow} {other:<15}  {text}")
+    return 0
+
+
+# -- post ---------------------------------------------------------------------
+
+def cmd_post(args, state) -> int:
+    user = _current_user(state)
+    if args.text_file:
+        try:
+            args.text = Path(args.text_file).read_text()
+        except OSError as exc:
+            return _die(f"could not read message file: {exc}")
+    if not args.text:
+        return _die("missing message text")
+    if bool(args.space) == bool(args.dm):
+        return _die("provide exactly one of --space or --dm")
+
+    if args.space:
+        name = args.space
+        sp = state.get("spaces", {}).get(name)
+        if not sp:
+            return _die(f"space not found: {name}")
+        if user not in sp.get("members", []):
+            return _die(f"not a member of {name}")
+        # Thread reply: validate parent exists in this space.
+        thread_ts = args.thread or None
+        if thread_ts:
+            parent = None
+            for m in state.get("space_messages", {}).get(name, []):
+                if m.get("ts") == thread_ts and not m.get("thread_ts"):
+                    parent = m
+                    break
+            if not parent:
+                return _die(f"thread parent not found in {name}: {thread_ts}")
+        ts = _now()
+        msg = {
+            "ts": ts,
+            "user": user,
+            "text": args.text,
+            "thread_ts": thread_ts,
+            "reply_count": 0,
+        }
+        state.setdefault("space_messages", {}).setdefault(name, []).append(msg)
+        if thread_ts:
+            # Bump parent's reply_count.
+            for m in state["space_messages"][name]:
+                if m.get("ts") == thread_ts and not m.get("thread_ts"):
+                    m["reply_count"] = (m.get("reply_count", 0) or 0) + 1
+                    break
+        _save_state(state)
+        _audit(
+            "space_post",
+            actor=user,
+            space=name,
+            length_chars=len(args.text),
+            thread_ts=thread_ts,
+            message_preview=_preview(args.text),
+        )
+        if args.json:
+            print(json.dumps({"status": "posted", "space": name, "ts": ts, "thread_ts": thread_ts}))
+        else:
+            label = f"{name}"
+            if thread_ts:
+                label += f" (thread {thread_ts})"
+            print(f"✓ Posted to {label} at {ts}")
+        return 0
+
+    # --dm path
+    peer = _strip_at(args.dm)
+    if peer == user:
+        return _die("cannot DM yourself")
+    # Users dict is optional to enforce against; we accept unknown peers so
+    # seeds can mention external logins without pre-seeding every user entry.
+    ts = _now()
+    msg = {
+        "ts": ts,
+        "from": user,
+        "to": peer,
+        "text": args.text,
+    }
+    key = _dm_key(user, peer)
+    state.setdefault("dms", {}).setdefault(key, []).append(msg)
+    _save_state(state)
+    _audit(
+        "dm_post",
+        actor=user,
+        dm_peer=peer,
+        length_chars=len(args.text),
+        thread_ts=None,
+        message_preview=_preview(args.text),
+    )
+    if args.json:
+        print(json.dumps({"status": "posted", "dm_peer": peer, "ts": ts}))
+    else:
+        print(f"✓ DM to {peer} at {ts}")
+    return 0
+
+
+# -- thread -------------------------------------------------------------------
+
+def cmd_thread_show(args, state) -> int:
+    user = _current_user(state)
+    parent_ts = args.ts
+    # Search across spaces the user can see.
+    for name, msgs in state.get("space_messages", {}).items():
+        sp = state.get("spaces", {}).get(name, {})
+        if user not in sp.get("members", []):
+            continue
+        parent = None
+        replies = []
+        for m in msgs:
+            if m.get("ts") == parent_ts and not m.get("thread_ts"):
+                parent = m
+            elif m.get("thread_ts") == parent_ts:
+                replies.append(m)
+        if parent:
+            replies.sort(key=lambda r: r.get("ts", ""))
+            if args.json:
+                print(json.dumps({"space": name, "parent": parent, "replies": replies}, indent=2))
+                return 0
+            print(f"{name}  thread {parent_ts}")
+            print(f"[{parent.get('ts','')}]  {parent.get('user',''):<15}  {parent.get('text','')}")
+            for r in replies:
+                print(f"  └─ [{r.get('ts','')}]  {r.get('user',''):<15}  {r.get('text','')}")
+            return 0
+    return _die(f"thread not found: {parent_ts}")
+
+
+# -- search -------------------------------------------------------------------
+
+def cmd_search(args, state) -> int:
+    user = _current_user(state)
+    query = args.query or ""
+    if not query:
+        return _die("missing search query")
+    needle = query.lower()
+    results: list[dict] = []
+    spaces = state.get("spaces", {})
+    msg_map = state.get("space_messages", {})
+    space_filter = args.space
+    for name, sp in spaces.items():
+        if user not in sp.get("members", []):
+            continue
+        if space_filter and name != space_filter:
+            continue
+        for m in msg_map.get(name, []):
+            if needle in (m.get("text", "") or "").lower():
+                results.append({
+                    "space": name,
+                    "ts": m.get("ts", ""),
+                    "user": m.get("user", ""),
+                    "text": m.get("text", ""),
+                    "thread_ts": m.get("thread_ts"),
+                })
+    results.sort(key=lambda r: r.get("ts", ""))
+    if args.json:
+        print(json.dumps({"query": query, "results": results}, indent=2))
+        return 0
+    if not results:
+        print(f"No matches for: {query}")
+        return 0
+    print(f"{len(results)} matches for: {query}")
+    for r in results:
+        print(f"[{r['ts']}]  {r['space']:<20}  {r['user']:<15}  {r['text']}")
+    return 0
+
+
+# -- dispatch -----------------------------------------------------------------
+
+def main() -> int:
+    p = argparse.ArgumentParser(prog="gchat", add_help=False)
+    p.add_argument("--json", action="store_true")
+    p.add_argument("--version", action="store_true")
+    p.add_argument("-h", "--help", action="store_true")
+    p.add_argument("command", nargs="?")
+    p.add_argument("subcommand", nargs="?")
+    p.add_argument("rest", nargs=argparse.REMAINDER)
+    args, _unknown = p.parse_known_args()
+
+    if args.version:
+        print("gchat-mock version 1.0.0")
+        return 0
+    if args.help and not args.command:
+        print(__doc__)
+        return 0
+
+    state = _load_state()
+    cmd, sub, rest = args.command, args.subcommand, args.rest
+
+    def sub_parser(**kwargs):
+        sp = argparse.ArgumentParser(prog=f"gchat {cmd} {sub or ''}".strip(), **kwargs)
+        sp.add_argument("--json", action="store_true")
+        return sp
+
+    if cmd == "whoami":
+        sp = sub_parser()
+        leftover = rest if rest else ([sub] if sub else [])
+        a = sp.parse_args(leftover)
+        return cmd_whoami(a, state)
+
+    if cmd == "space":
+        if sub == "list":
+            sp = sub_parser()
+            a = sp.parse_args(rest)
+            return cmd_space_list(a, state)
+        if sub == "history":
+            sp = sub_parser()
+            # `--space` is the alternative spelling of the positional;
+            # real Chat CLIs accept both. nargs="?" so both `gchat space
+            # history support-eng` and `gchat space history --space
+            # support-eng` work.
+            sp.add_argument("space", nargs="?")
+            sp.add_argument("--space", dest="space_flag")
+            sp.add_argument("--limit", type=int, default=50)
+            sp.add_argument("--since")
+            a = sp.parse_args(rest)
+            a.space = a.space or a.space_flag
+            return cmd_space_history(a, state)
+
+    if cmd == "dm":
+        if sub == "list":
+            sp = sub_parser()
+            a = sp.parse_args(rest)
+            return cmd_dm_list(a, state)
+        if sub == "history":
+            sp = sub_parser()
+            sp.add_argument("user", nargs="?")
+            sp.add_argument("--user", dest="user_flag")
+            sp.add_argument("--limit", type=int, default=50)
+            sp.add_argument("--since")
+            a = sp.parse_args(rest)
+            a.user = a.user or a.user_flag
+            return cmd_dm_history(a, state)
+
+    if cmd == "post":
+        sp = sub_parser()
+        sp.add_argument("--space")
+        sp.add_argument("--dm")
+        sp.add_argument("--thread", "--ts", dest="thread")
+        # `text` may be passed positionally (Chat CLI idiom) or as
+        # `--message`/`--text`/`--body` (other CLIs' idioms).
+        sp.add_argument("text", nargs="?")
+        sp.add_argument("--message", "--text", "--body", dest="text_flag")
+        sp.add_argument("--message-file", "--text-file", "--body-file", dest="text_file")
+        # `post` has no subcommand; argparse swallowed the first positional as `sub`.
+        leftover = ([sub] if sub else []) + rest
+        a = sp.parse_args(leftover)
+        a.text = a.text or a.text_flag
+        return cmd_post(a, state)
+
+    if cmd == "thread" and sub == "show":
+        sp = sub_parser()
+        sp.add_argument("ts", nargs="?")
+        # Real Chat CLIs accept `--ts` (timestamp) and `--space` for
+        # disambiguation. `--space` is informational here (mock keys
+        # threads by ts globally) but accepted to avoid arg errors.
+        sp.add_argument("--ts", dest="ts_flag")
+        sp.add_argument("--space")
+        a = sp.parse_args(rest)
+        a.ts = a.ts or a.ts_flag
+        return cmd_thread_show(a, state)
+
+    if cmd == "search":
+        sp = sub_parser()
+        sp.add_argument("query", nargs="?")
+        sp.add_argument("--space")
+        leftover = ([sub] if sub else []) + rest
+        a = sp.parse_args(leftover)
+        return cmd_search(a, state)
+
+    if cmd:
+        print(f"gchat-mock: subcommand not implemented: `gchat {cmd} {sub or ''}`", file=sys.stderr)
+        print(
+            "Supported: whoami; space list/history; dm list/history; post --space|--dm; thread show; search",
+            file=sys.stderr,
+        )
+        return 2
+
+    print(__doc__)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

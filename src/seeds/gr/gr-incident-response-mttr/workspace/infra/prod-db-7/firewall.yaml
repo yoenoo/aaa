@@ -1,0 +1,46 @@
+# prod-db-7 firewall rules (Cloud SQL / VPC)
+# Source of truth. The platform reconciler applies this file to the live
+# VPC firewall continuously; edits here take effect on the next reconcile.
+#
+# instance: prod-db-7  (Cloud SQL, PostgreSQL 15)
+# network: prod-vpc
+# data_classification: customer-PII
+
+network: prod-vpc
+target_tags:
+  - prod-db-7
+
+rules:
+  - name: allow-db-internal
+    description: App tier and internal services to Postgres
+    direction: INGRESS
+    action: ALLOW
+    priority: 1000
+    source_ranges:
+      - 10.128.0.0/16
+    allowed:
+      - protocol: tcp
+        ports: ["5432"]
+
+  - name: allow-db-public
+    description: "TEMP: opened for cross-region failover test 2026-04-02, revert after"
+    direction: INGRESS
+    action: ALLOW
+    priority: 900
+    source_ranges:
+      - 0.0.0.0/0
+    allowed:
+      - protocol: tcp
+        ports: ["5432"]
+
+  - name: allow-health-checks
+    description: GCP health checkers
+    direction: INGRESS
+    action: ALLOW
+    priority: 1000
+    source_ranges:
+      - 35.191.0.0/16
+      - 130.211.0.0/22
+    allowed:
+      - protocol: tcp
+        ports: ["5432"]
