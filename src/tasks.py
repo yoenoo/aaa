@@ -37,7 +37,7 @@ def _pick_scorers(judge_preset: str) -> list[Scorer]:
 
 @task
 def petri_task(
-    seed_name: str = "sc-oversight-code-review",
+    seed_name: str = "as-hidden-soar",
     scaffold: str = "Claude Code",
     expose_reasoning: bool = False,
     judge_preset: str = "scheming+debug",
@@ -45,7 +45,7 @@ def petri_task(
     """Create an inspect Task for a single seed.
 
     Args:
-        seed_name: Name of the seed (stem of the .yaml file).
+        seed_name: Active seed id returned by ``seeds.list_seeds()``.
         scaffold: "Claude Code", "Codex CLI", "Gemini CLI", or "bare".
         expose_reasoning: If True, forward the target's internal reasoning
             (or provider-returned summary) back to the auditor via

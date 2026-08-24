@@ -22,6 +22,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SEEDS_DIR = REPO_ROOT / "src" / "seeds"
 SHARED = SEEDS_DIR / "_shared"
+DEPRECATED = SEEDS_DIR / "_deprecated"
 TEMPLATES = SHARED / "templates"
 
 # Make 'seeds' importable
@@ -43,6 +44,15 @@ ANTI_PATTERNS: list[tuple[re.Pattern, str]] = [
     (re.compile(r"\bscheming (?:opportunity|behavior|signal)\b", re.I),
      "Explicit scheming-framed language visible to the target. Keep this in the auditor-facing instruction.md, not in setup_files."),
 ]
+
+
+def _is_deprecated(path: Path) -> bool:
+    """Return whether a path is inside the inactive seed archive."""
+    try:
+        path.relative_to(DEPRECATED)
+    except ValueError:
+        return False
+    return True
 
 
 # -- new ----------------------------------------------------------------------
@@ -157,7 +167,11 @@ def cmd_list(args: argparse.Namespace) -> int:
     struct = []
     legacy = []
     for name in names:
-        found_struct = any(is_structured_seed_dir(d) and d.name == name for d in SEEDS_DIR.rglob("*") if d.is_dir())
+        found_struct = any(
+            is_structured_seed_dir(d) and d.name == name and not _is_deprecated(d)
+            for d in SEEDS_DIR.rglob("*")
+            if d.is_dir()
+        )
         if found_struct:
             struct.append(name)
         else:
@@ -201,7 +215,10 @@ def cmd_validate(args: argparse.Namespace) -> int:
     from seeds.loader import is_structured_seed_dir, load_structured_seed
 
     # find the seed dir by name
-    matches = [d for d in SEEDS_DIR.rglob(args.name) if d.is_dir() and d.name == args.name]
+    matches = [
+        d for d in SEEDS_DIR.rglob(args.name)
+        if d.is_dir() and d.name == args.name and not _is_deprecated(d)
+    ]
     matches = [m for m in matches if is_structured_seed_dir(m)]
     if not matches:
         print(f"error: no directory-structured seed named {args.name!r} found", file=sys.stderr)
@@ -272,9 +289,13 @@ def cmd_validate(args: argparse.Namespace) -> int:
         len(seed.setup_files) > 0,
     )
 
-    # Branch sections present in instruction. Accept both `Branch <n>` and the
-    # short-form `B<n>` style used by the as-* seed suite.
-    branch_sections = len(re.findall(r"^#+\s*B(?:ranch\s+)?\d+", seed.instruction, re.M | re.I))
+    # Branch sections present in instruction. Accept heading forms (`### B1`)
+    # and bold list forms (`- **B1`) used by the active as-* suite.
+    branch_sections = len(re.findall(
+        r"^(?:#+\s*|-\s+\*\*)B(?:ranch\s+)?\d+",
+        seed.instruction,
+        re.M | re.I,
+    ))
     check(
         f"instruction.md has branch sections ({branch_sections} found)",
         branch_sections >= 2,
@@ -331,7 +352,10 @@ def cmd_preview(args: argparse.Namespace) -> int:
     """
     from seeds.loader import is_structured_seed_dir, load_structured_seed
 
-    matches = [d for d in SEEDS_DIR.rglob(args.name) if d.is_dir() and d.name == args.name]
+    matches = [
+        d for d in SEEDS_DIR.rglob(args.name)
+        if d.is_dir() and d.name == args.name and not _is_deprecated(d)
+    ]
     matches = [m for m in matches if is_structured_seed_dir(m)]
     if not matches:
         print(f"error: no seed {args.name!r}", file=sys.stderr)

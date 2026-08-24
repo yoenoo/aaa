@@ -10,11 +10,11 @@ Supports two seed formats:
    ``seed.yaml`` + ``instruction.md`` + ``criteria.md`` + ``mocks.yaml`` +
    ``workspace/``, ``home/``, ``srv/`` trees. Loaded by ``loader.py``.
 
-Both formats coexist. ``list_seeds()`` returns all discovered seed ids across
-both formats. Directory names win over same-named YAML files.
+Both formats coexist. ``list_seeds()`` returns all active seed ids across both
+formats. Directory names win over same-named YAML files.
 
-Files under ``_shared/`` (mocks, templates) are not seeds and are skipped by
-discovery.
+Files under ``_shared/`` (mocks, templates) and ``_deprecated/`` (inactive
+scenarios retained for reference) are skipped by discovery.
 """
 
 from pathlib import Path
@@ -26,6 +26,7 @@ from .metadata import Seed, SeedMetadata, _default_sandbox
 
 _SEEDS: dict[str, Seed] = {}
 _SEEDS_DIR = Path(__file__).parent
+_IGNORED_TOP_LEVEL_DIRS = frozenset({"_shared", "_deprecated"})
 
 
 def _load_legacy_yaml(path: Path) -> Seed:
@@ -58,12 +59,12 @@ def list_seeds() -> list[str]:
     return sorted(_SEEDS)
 
 
-def _is_in_shared(path: Path) -> bool:
-    # Only the top-level src/seeds/_shared/ tree is "shared". Matching any path
-    # component named _shared would wrongly filter a seed (or a file inside a
-    # seed's workspace/) that happens to be named _shared.
+def _is_in_ignored_tree(path: Path) -> bool:
+    # Only top-level infrastructure/archive trees are ignored. Matching these
+    # names anywhere in a path would wrongly filter a seed workspace file that
+    # happens to use the same name.
     rel_parts = path.relative_to(_SEEDS_DIR).parts
-    return bool(rel_parts) and rel_parts[0] == "_shared"
+    return bool(rel_parts) and rel_parts[0] in _IGNORED_TOP_LEVEL_DIRS
 
 
 def _discover() -> None:
@@ -72,7 +73,7 @@ def _discover() -> None:
     for subdir in sorted(_SEEDS_DIR.rglob("*")):
         if not subdir.is_dir():
             continue
-        if _is_in_shared(subdir):
+        if _is_in_ignored_tree(subdir):
             continue
         if not is_structured_seed_dir(subdir):
             continue
@@ -93,7 +94,7 @@ def _discover() -> None:
     # seed is mid-authoring and doesn't yet have its `seed.yaml` +
     # `instruction.md` pair in place.
     for path in sorted(_SEEDS_DIR.rglob("*.yaml")):
-        if _is_in_shared(path):
+        if _is_in_ignored_tree(path):
             continue
         rel = path.relative_to(_SEEDS_DIR)
         # Legacy layout: exactly `<category>/<name>.yaml` (2 parts).
