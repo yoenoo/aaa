@@ -296,18 +296,28 @@
   // ---- overview silhouette ---------------------------------------------
   const overview = $derived.by(() => {
     if (!transcript) return [] as { a: number; t: number; hl: boolean; cut: boolean; id: string }[];
-    const evs = transcript.events;
+    const evs = transcript.events.filter((e) => !isSeedDelivery(e));
+    // Every event contributes activity to one side: the auditor lane (its own
+    // turns + the tool results it fetched) or the target lane (its replies).
+    // sqrt compresses the scale so a single 28 KB reply doesn't flatten the rest.
+    const mag = (n: number) => (n > 0 ? Math.sqrt(n) : 0);
     const raw = evs.map((ev, i) => {
-      const aud = ev.role === 'assistant'
-        ? (ev.content?.length || 0) + 220 * ((ev as AssistantEvent).tool_calls?.length || 0)
-        : ev.role === 'user' ? (ev.content?.length || 0) : 0;
-      const tgt = isTargetEvent(ev) ? (ev.content?.length || 0) : 0;
+      let audN = 0;
+      let tgtN = 0;
+      if (isTargetEvent(ev)) tgtN = ev.content?.length || 0;
+      else if (ev.role === 'assistant') audN = (ev.content?.length || 0) + 260 * ((ev as AssistantEvent).tool_calls?.length || 0);
+      else if (ev.role === 'tool') audN = (ev.content?.length || 0) + 150;
+      else audN = (ev.content?.length || 0) + 100;
       const prev = evs[i - 1];
-      return { a: aud, t: tgt, hl: highlightsByEvent.has(ev.id), cut: !!prev && prev.branch !== ev.branch, id: ev.id };
+      return { a: mag(audN), t: mag(tgtN), hl: highlightsByEvent.has(ev.id), cut: !!prev && prev.branch !== ev.branch, id: ev.id };
     });
     const maxA = Math.max(1, ...raw.map((r) => r.a));
     const maxT = Math.max(1, ...raw.map((r) => r.t));
-    return raw.map((r) => ({ ...r, a: r.a / maxA, t: r.t / maxT }));
+    return raw.map((r) => ({
+      ...r,
+      a: r.a > 0 ? Math.max(0.14, r.a / maxA) : 0,
+      t: r.t > 0 ? Math.max(0.14, r.t / maxT) : 0,
+    }));
   });
 
   // ---- judge scores (direction-aware) -----------------------------------
@@ -403,6 +413,21 @@
       else label = 'auditor actions';
       return { label, branch: r.branch, anchorId: r.anchorId, count: r.count, hl: r.hl, flagged: r.flagged };
     });
+  });
+
+  // Horizontal position (%) of each branch boundary, on the timeband's event-count
+  // basis, so a single divider can span the silhouette and the band aligned.
+  const cutPcts = $derived.by<number[]>(() => {
+    const total = timeline.reduce((n, s) => n + s.count, 0);
+    if (!total || !timeline.length) return [];
+    const out: number[] = [];
+    let acc = 0;
+    let branch = timeline[0].branch;
+    for (const s of timeline) {
+      if (s.branch !== branch) { out.push((acc / total) * 100); branch = s.branch; }
+      acc += s.count;
+    }
+    return out;
   });
 
   // ---- render rows: branch cuts + events (key-beats collapses content) ------
@@ -541,9 +566,12 @@
     <div class="ov" aria-hidden="true">
       <div class="ovcols">
         {#each overview as c (c.id)}
-          <i class:hl={c.hl} class:cut={c.cut} style="--a:{c.a}; --t:{c.t}"></i>
+          <i class:hl={c.hl} style="--a:{c.a}; --t:{c.t}"></i>
         {/each}
       </div>
+      {#each cutPcts as pct (pct)}
+        <div class="branch-line" style="left:{pct}%"></div>
+      {/each}
     </div>
 
     <nav class="timeband" aria-label="Timeline">
@@ -569,7 +597,7 @@
 
   {#snippet targetCard(id: string, t: TTurn, no: string, hls: HL[])}
     <div class="tgt-card" class:flag={hls.some((h) => !h.debug)}>
-      <span class="lbl">target · turn {no}</span>
+      <span class="lbl">turn {no}</span>
       {#if t.preamble}<div class="ttext"><HighlightedText text={t.preamble} quotes={quotesFor(id)} debugQuotes={debugQuotesFor(id)} /></div>{/if}
       {#each t.calls as c, ci (ci)}
         {@const pc = parseCall(c.head)}
@@ -669,7 +697,7 @@
             {@const unmatched = hls.filter((h) => !matchedN.has(h.n))}
             <div class="lt lt-wide">
               {#if grouped.groups.length || grouped.finalText}
-                <div class="tlabel lbl">target · {ev.tool_name}{#if grouped.turnCount} · {grouped.turnCount} turns{/if}</div>
+                <div class="tlabel lbl">{#if grouped.turnCount}{grouped.turnCount} turn{grouped.turnCount === 1 ? '' : 's'}{:else}reply{/if}</div>
                 {#if unmatched.length}
                   <div class="turn-row"><div class="turn-main"></div><div class="turn-anns">{#each unmatched as h (h.n)}{@render annBtn(h)}{/each}</div></div>
                 {/if}
@@ -694,7 +722,7 @@
                   <div class="turn-row">
                     <div class="turn-main">
                       <div class="tgt-card" class:flag={finalHls.some((h) => !h.debug)}>
-                        <span class="lbl">target · final message</span>
+                        <span class="lbl">final message</span>
                         <div class="tmsg"><MarkdownText text={grouped.finalText} quotes={quotesFor(ev.id)} debugQuotes={debugQuotesFor(ev.id)} /></div>
                       </div>
                     </div>
@@ -933,12 +961,12 @@
   .themebtn svg { width: 15px; height: 15px; }
 
   .ov { position: relative; max-width: 1480px; margin: 9px auto 0; height: 42px; border: 1px solid var(--border); background: var(--surface); }
+  .branch-line { position: absolute; top: 0; bottom: 0; width: 0; border-left: 1.5px dashed var(--border-strong); pointer-events: none; z-index: 4; }
   .ovcols { display: flex; height: 100%; background: linear-gradient(var(--railc), var(--railc)) center/100% 1px no-repeat; }
   .ovcols i { flex: 1; position: relative; min-width: 0; }
   .ovcols i::before { content: ""; position: absolute; left: 18%; right: 18%; bottom: 50%; height: calc(var(--a, 0) * 46%); background: var(--aud); }
   .ovcols i::after { content: ""; position: absolute; left: 18%; right: 18%; top: 50%; height: calc(var(--t, 0) * 46%); background: var(--tgt); }
   .ovcols i.hl { box-shadow: inset 0 -3px 0 var(--hl); }
-  .ovcols i.cut { border-left: 2px solid var(--text); }
 
   .timeband { display: flex; gap: 2px; max-width: 1480px; margin: 5px auto 0; }
   .timeband button { flex: var(--w, 1); min-width: 0; text-align: left; cursor: pointer; appearance: none; background: var(--surface); border: 1px solid var(--border); border-top: 3px solid var(--railc); padding: 5px 9px 6px; font: inherit; color: var(--text-muted); display: flex; flex-direction: column; gap: 2px; }
