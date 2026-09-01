@@ -217,14 +217,29 @@
 
 <style>
   .msg {
-    margin: 8px 0;
-    padding: 14px 18px;
-    border-radius: var(--radius);
-    border: 1px solid var(--border);
-    background: var(--surface);
-    transition: border-color 0.12s;
+    position: relative;
+    margin: 0;
+    padding: 16px 18px 18px 20px;
+    border-radius: 0;
+    border: 0;
+    border-bottom: 1px solid var(--border);
+    background: transparent;
+    transition: background 0.12s;
   }
-  .msg:hover { border-color: var(--border-strong); }
+  .msg::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 17px;
+    bottom: 17px;
+    width: 2px;
+    border-radius: 2px;
+    background: color-mix(in srgb, var(--role-accent, var(--text-faint)) 65%, transparent);
+  }
+  .msg:hover { background: color-mix(in srgb, var(--surface) 52%, transparent); }
+  .msg.target { background: color-mix(in srgb, var(--target) 2.5%, transparent); }
+  .msg.annotated { background: color-mix(in srgb, var(--warning) 5%, transparent); }
+  .msg.annotated::before { width: 3px; background: var(--warning); }
 
   .msg.user { --role-accent: var(--user); }
   .msg.assistant { --role-accent: var(--auditor); }
@@ -313,8 +328,8 @@
   }
   .msg.system {
     background: var(--surface-sunk);
-    border: 1px solid var(--border);
-    border-left: 2px solid var(--border-strong);
+    border: 0;
+    border-bottom: 1px solid var(--border);
     padding: 10px 16px;
   }
   .role-row {
@@ -330,11 +345,11 @@
     text-transform: uppercase;
     letter-spacing: 0.14em;
     font-weight: 700;
-    padding: 2px 9px;
-    border-radius: 999px;
+    padding: 0;
+    border-radius: 0;
     color: var(--role-accent, var(--text-muted));
-    background: color-mix(in srgb, var(--role-accent, var(--text-muted)) 11%, transparent);
-    border: 1px solid color-mix(in srgb, var(--role-accent, var(--text-muted)) 30%, transparent);
+    background: transparent;
+    border: 0;
   }
   .dur {
     font-size: 0.7rem;

@@ -51,6 +51,7 @@ export interface Highlight {
   event_id: string;
   quoted_text: string;
   note: string;
+  source?: string;
 }
 
 export interface Branch {

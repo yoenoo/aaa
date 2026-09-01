@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import AuditList from './lib/AuditList.svelte';
-  import TranscriptView from './lib/TranscriptView.svelte';
+  import TranscriptView from './lib/LanesView.svelte';
 
   function parseHash(): { id: string; eventId: string } {
     const h = (typeof window === 'undefined' ? '' : window.location.hash) || '';

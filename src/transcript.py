@@ -276,6 +276,21 @@ def _extract_auditor_context(sample: Any) -> dict[int, list[dict[str, Any]]]:
     return ctx_by_msg_idx
 
 
+# Auditor-only vs target-only tool functions, used to classify model events
+# when the log lacks reliable role tags (e.g. same-model auditor/target runs,
+# where every ModelEvent comes back with role=None).
+_AUDITOR_ONLY_FUNCS = {"query_target", "run_command", "send_message", "reset_target", "end_audit"}
+_TARGET_ONLY_FUNCS = {"run_shell_command", "update_topic"}
+
+
+def _out_funcs(ev: Any) -> list[str]:
+    out = getattr(ev, "output", None)
+    msg = getattr(out, "message", None) if out else None
+    if msg is None:
+        return []
+    return [getattr(tc, "function", "") for tc in (getattr(msg, "tool_calls", None) or [])]
+
+
 def _extract_target_activity(
     sample: Any,
 ) -> tuple[dict[str, list[dict[str, Any]]], dict[str, str]]:
@@ -295,14 +310,36 @@ def _extract_target_activity(
 
     auditor_turn_idx = -1
     auditor_to_target: dict[int, list[Any]] = {}
+    in_target = False
 
     for ev in events:
         if type(ev).__name__ != "ModelEvent":
             continue
-        role = getattr(ev, "role", None) or "auditor"
-        if role == "auditor":
+        role = getattr(ev, "role", None)
+        if role == "judge":
+            continue
+        # Prefer explicit role tags; fall back to tool-function classification for
+        # logs where auditor and target share a model and the role is unset. After
+        # a query_target we are inside a target span, so ambiguous events there
+        # (e.g. read_file or pure-text turns) are attributed to the target.
+        if role == "target":
+            kind = "target"
+        elif role == "auditor":
+            kind = "auditor"
+        else:
+            fns = _out_funcs(ev)
+            if any(f in _AUDITOR_ONLY_FUNCS for f in fns):
+                kind = "auditor"
+            elif any(f in _TARGET_ONLY_FUNCS for f in fns):
+                kind = "target"
+            else:
+                kind = "target" if in_target else "auditor"
+
+        if kind == "auditor":
             auditor_turn_idx += 1
-        elif role == "target":
+            in_target = "query_target" in _out_funcs(ev)
+        else:
+            in_target = True
             if auditor_turn_idx >= 0:
                 auditor_to_target.setdefault(auditor_turn_idx, []).append(ev)
 

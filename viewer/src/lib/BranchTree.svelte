@@ -9,6 +9,16 @@
 
   const highlightedIds = $derived(new Set(highlights.map((h) => h.event_id).filter(Boolean)));
 
+  const outlineEvents = $derived.by(() => events.filter((e) => {
+    if (highlightedIds.has(e.id)) return true;
+    if (e.role === 'user') return true;
+    if (e.role === 'tool') return e.tool_name === 'query_target';
+    if (e.role === 'assistant') {
+      return e.tool_calls.some((tc) => ['send_message', 'reset_target', 'end_audit'].includes(tc.function));
+    }
+    return false;
+  }));
+
   function roleDot(role: Event['role']): string {
     // ch = single-character role marker
     if (role === 'system') return 'S';
@@ -21,6 +31,8 @@
     if (e.role === 'system') return 'system prompt';
     if (e.role === 'user') return e.content?.slice(0, 60) || '';
     if (e.role === 'assistant') {
+      const send = e.tool_calls.find((t) => t.function === 'send_message');
+      if (send) return String(send.arguments.message || 'auditor message').replace(/\s+/g, ' ').slice(0, 60);
       if (e.tool_calls?.length) {
         const names = e.tool_calls.map((t) => t.function).join(', ');
         return names.length > 50 ? names.slice(0, 50) + '…' : names;
@@ -28,6 +40,10 @@
       return (e.content || '').slice(0, 60);
     }
     // tool
+    if (e.tool_name === 'query_target') {
+      const calls = e.target_activity?.reduce((n, turn) => n + turn.tool_calls.length, 0) || 0;
+      return `target episode${calls ? ` · ${calls} calls` : ''}`;
+    }
     return e.tool_name || 'tool';
   }
 
@@ -56,7 +72,8 @@
 
   function updateActive() {
     rafPending = false;
-    const refY = 140;
+    const root = document.querySelector<HTMLElement>('.transcript-scroll');
+    const refY = (root?.getBoundingClientRect().top || 0) + 90;
     let best: string | null = null;
     let bestDist = Infinity;
     for (const e of events) {
@@ -81,9 +98,11 @@
   }
 
   $effect(() => {
-    window.addEventListener('scroll', onScroll, { passive: true });
-    updateActive();
-    return () => window.removeEventListener('scroll', onScroll);
+    const root = document.querySelector<HTMLElement>('.transcript-scroll');
+    const scrollTarget: Window | HTMLElement = root || window;
+    scrollTarget.addEventListener('scroll', onScroll, { passive: true });
+    requestAnimationFrame(updateActive);
+    return () => scrollTarget.removeEventListener('scroll', onScroll);
   });
 
   const byBranch = $derived.by(() => {
@@ -91,7 +110,7 @@
     const branchByIdx = new Map<number, Branch>();
     for (const b of branches) branchByIdx.set(b.index, b);
     let current: { branch: Branch; events: Event[] } | null = null;
-    for (const e of events) {
+    for (const e of outlineEvents) {
       const b = branchByIdx.get(e.branch);
       if (!b) continue;
       if (!current || current.branch.index !== b.index) {
@@ -146,17 +165,19 @@
 
 <style>
   .tree {
-    position: sticky;
-    top: 80px;
-    max-height: calc(100vh - 100px);
+    height: 100%;
     overflow-y: auto;
-    padding: 4px 4px 16px 0;
+    padding: 14px 10px 24px 12px;
     font-size: 0.78rem;
     scrollbar-width: none;
     -ms-overflow-style: none;
   }
   .tree::-webkit-scrollbar { width: 0; height: 0; }
   .tree-head {
+    position: sticky;
+    top: -14px;
+    z-index: 2;
+    background: var(--surface-sunk);
     display: flex;
     align-items: center;
     gap: 8px;
@@ -179,7 +200,7 @@
   }
 
   ol { list-style: none; padding: 0; margin: 0; }
-  .branches { display: flex; flex-direction: column; gap: 6px; }
+  .branches { display: flex; flex-direction: column; gap: 10px; }
 
   .branch-header {
     display: flex;
@@ -196,7 +217,7 @@
     border-radius: var(--radius-sm);
     transition: background 0.12s;
   }
-  .branch-header:hover { background: var(--surface-alt); }
+  .branch-header:hover { background: var(--surface); }
   .commit-marker {
     color: var(--text-muted);
     font-size: 0.7rem;
@@ -239,7 +260,7 @@
     border-radius: var(--radius-sm);
     transition: background 0.12s, color 0.12s;
   }
-  .event-btn:hover { background: var(--surface-alt); color: var(--text); }
+  .event-btn:hover { background: var(--surface); color: var(--text); }
 
   .rail {
     position: relative;

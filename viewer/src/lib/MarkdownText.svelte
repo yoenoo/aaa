@@ -4,7 +4,7 @@
   import hljs from 'highlight.js/lib/common';
   import 'highlight.js/styles/github-dark.css';
 
-  let { text, quotes = [] }: { text: string; quotes?: string[] } = $props();
+  let { text, quotes = [], debugQuotes = [] }: { text: string; quotes?: string[]; debugQuotes?: string[] } = $props();
 
   const md = new Marked(
     { breaks: true, gfm: true },
@@ -30,34 +30,39 @@
   const html = $derived.by(() => {
     const src = text ?? '';
     if (!src) return '';
-    if (quotes.length === 0) return md.parse(src) as string;
+    if (quotes.length === 0 && debugQuotes.length === 0) return md.parse(src) as string;
 
-    const ranges: [number, number][] = [];
-    for (const q of quotes) {
-      if (!q) continue;
-      let from = 0;
-      while (from < src.length) {
-        const idx = src.indexOf(q, from);
-        if (idx === -1) break;
-        ranges.push([idx, idx + q.length]);
-        from = idx + q.length;
+    // ranges tagged debug=false (concerning) or true (debug); concerning wins overlaps
+    const ranges: { s: number; e: number; debug: boolean }[] = [];
+    const collect = (list: string[], debug: boolean) => {
+      for (const q of list) {
+        if (!q) continue;
+        let from = 0;
+        while (from < src.length) {
+          const idx = src.indexOf(q, from);
+          if (idx === -1) break;
+          ranges.push({ s: idx, e: idx + q.length, debug });
+          from = idx + q.length;
+        }
       }
-    }
+    };
+    collect(quotes, false);
+    collect(debugQuotes, true);
     if (ranges.length === 0) return md.parse(src) as string;
 
-    ranges.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
-    const merged: [number, number][] = [];
-    for (const [s, e] of ranges) {
+    ranges.sort((a, b) => a.s - b.s || a.e - b.e);
+    const merged: { s: number; e: number; debug: boolean }[] = [];
+    for (const r of ranges) {
       const last = merged[merged.length - 1];
-      if (last && s <= last[1]) last[1] = Math.max(last[1], e);
-      else merged.push([s, e]);
+      if (last && r.s <= last.e) { last.e = Math.max(last.e, r.e); last.debug = last.debug && r.debug; }
+      else merged.push({ ...r });
     }
 
     let out = '';
     let cursor = 0;
-    for (const [s, e] of merged) {
+    for (const { s, e, debug } of merged) {
       out += src.slice(cursor, s);
-      out += '<mark>' + src.slice(s, e) + '</mark>';
+      out += (debug ? '<mark class="hl-debug">' : '<mark>') + src.slice(s, e) + '</mark>';
       cursor = e;
     }
     out += src.slice(cursor);

@@ -6,7 +6,15 @@
     events,
     highlights = [],
     query = '',
-  }: { events: Event[]; highlights?: Highlight[]; query?: string } = $props();
+    viewMode = 'flow',
+  }: {
+    events: Event[];
+    highlights?: Highlight[];
+    query?: string;
+    viewMode?: 'flow' | 'evidence' | 'full';
+  } = $props();
+
+  const highlightedIds = $derived(new Set(highlights.map((h) => h.event_id).filter(Boolean)));
 
   const highlightsByEventId = $derived.by(() => {
     const map: Record<string, Highlight[]> = {};
@@ -44,11 +52,39 @@
     return false;
   }
 
-  // Visible events + the branches they belong to.
+  function isFlowEvent(e: Event): boolean {
+    if (e.role === 'user') return true;
+    if (e.role === 'tool') return e.tool_name === 'query_target';
+    if (e.role === 'system') return false;
+    if (highlightedIds.has(e.id)) return true;
+    if (e.tool_calls.some((tc) => ['send_message', 'reset_target', 'end_audit'].includes(tc.function))) return true;
+    return e.tool_calls.length === 0 && !!e.content?.trim();
+  }
+
+  const evidenceIds = $derived.by(() => {
+    const ids = new Set<string>(highlightedIds);
+    for (let i = 0; i < events.length; i++) {
+      if (!highlightedIds.has(events[i].id)) continue;
+      const branch = events[i].branch;
+      for (let j = Math.max(0, i - 4); j <= Math.min(events.length - 1, i + 1); j++) {
+        const candidate = events[j];
+        if (candidate.branch !== branch) continue;
+        if (candidate.role === 'tool' && candidate.tool_name === 'query_target') ids.add(candidate.id);
+        if (candidate.role === 'assistant' && candidate.tool_calls.some((tc) => tc.function === 'send_message')) ids.add(candidate.id);
+        if (candidate.id === events[i].id) ids.add(candidate.id);
+      }
+    }
+    return ids;
+  });
+
+  // Visible events + the branches they belong to. Search intentionally spans
+  // the full trace, regardless of the active reader mode.
   const filtered = $derived.by(() => {
     const q = query.trim();
-    if (!q) return events;
-    return events.filter((e) => eventMatchesQuery(e, q));
+    if (q) return events.filter((e) => eventMatchesQuery(e, q));
+    if (viewMode === 'full') return events;
+    if (viewMode === 'evidence') return events.filter((e) => evidenceIds.has(e.id));
+    return events.filter(isFlowEvent);
   });
 
   const byBranch = $derived.by(() => {
@@ -72,6 +108,15 @@
     <div class="filter-info">
       Showing <strong>{filtered.length}</strong> of {events.length} events matching
       <code>{query}</code>
+    </div>
+  {/if}
+  {#if !filterActive && viewMode !== 'full'}
+    <div class="mode-info">
+      {#if viewMode === 'flow'}
+        Reader mode hides setup and verification noise. <strong>{filtered.length}</strong> of {events.length} events shown.
+      {:else}
+        Evidence mode shows cited events with nearby auditor context. <strong>{filtered.length}</strong> of {events.length} events shown.
+      {/if}
     </div>
   {/if}
   {#if filtered.length === 0 && filterActive}
@@ -100,6 +145,16 @@
     font-size: 0.8rem;
     color: var(--text-muted);
   }
+  .mode-info {
+    margin: 10px 0 14px;
+    padding: 8px 11px;
+    color: var(--text-faint);
+    background: var(--surface-sunk);
+    border: 1px dashed var(--border);
+    border-radius: var(--radius-sm);
+    font-size: 0.7rem;
+  }
+  .mode-info strong { color: var(--text-muted); font-variant-numeric: tabular-nums; }
   .filter-info strong { color: var(--text); font-variant-numeric: tabular-nums; font-weight: 600; }
   .empty {
     margin: 16px 0;

@@ -1,8 +1,38 @@
 <script lang="ts">
   import type { TargetTurn } from './types';
   import MarkdownText from './MarkdownText.svelte';
+  import { getExpandContext } from './expandContext';
 
   let { turns, quotes = [] }: { turns: TargetTurn[]; quotes?: string[] } = $props();
+
+  const expandContext = getExpandContext();
+  let open = $state(false);
+
+  const callCount = $derived(turns.reduce((sum, turn) => sum + turn.tool_calls.length, 0));
+  const reasoningChars = $derived(turns.reduce((sum, turn) => sum + (turn.reasoning?.length || turn.redacted_reasoning_chars || 0), 0));
+  const finalText = $derived.by(() => {
+    for (let i = turns.length - 1; i >= 0; i--) {
+      if (turns[i].text?.trim()) return turns[i].text.trim().replace(/\s+/g, ' ');
+    }
+    return '';
+  });
+  const toolMix = $derived.by(() => {
+    const counts = new Map<string, number>();
+    for (const turn of turns) {
+      for (const call of turn.tool_calls) counts.set(call.function, (counts.get(call.function) || 0) + 1);
+    }
+    return [...counts.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 3)
+      .map(([name, count]) => `${name}${count > 1 ? ` ×${count}` : ''}`)
+      .join(' · ');
+  });
+
+  $effect(() => {
+    if (expandContext.value === 'expanded') open = true;
+    else if (expandContext.value === 'collapsed') open = false;
+    else if (quotes.length > 0) open = true;
+  });
 
   function argsPreview(args: Record<string, unknown>): string {
     const parts: string[] = [];
@@ -31,9 +61,23 @@
   }
 </script>
 
-<div class="activity">
-  {#each turns as turn, i (i)}
-    <div class="turn">
+<details class="episode" bind:open>
+  <summary>
+    <span class="episode-caret"></span>
+    <span class="episode-title">Target episode</span>
+    <span class="episode-stats">{turns.length} turn{turns.length === 1 ? '' : 's'} · {callCount} call{callCount === 1 ? '' : 's'}</span>
+    {#if toolMix}<span class="episode-tools">{toolMix}</span>{/if}
+  </summary>
+  {#if !open && finalText}
+    <div class="episode-preview">{finalText.slice(0, 220)}{finalText.length > 220 ? '…' : ''}</div>
+  {/if}
+  {#if open}
+    <div class="activity">
+      {#if reasoningChars > 0}
+        <div class="episode-note">{reasoningChars.toLocaleString()} reasoning chars · expand individual turns as needed</div>
+      {/if}
+      {#each turns as turn, i (i)}
+        <div class="turn">
       {#if turn.reasoning}
         <details class="target-reasoning">
           <summary>
@@ -71,16 +115,68 @@
           </div>
         </details>
       {/each}
+        </div>
+      {/each}
     </div>
-  {/each}
-</div>
+  {/if}
+</details>
 
 <style>
+  .episode {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--surface-sunk);
+    overflow: hidden;
+  }
+  .episode > summary {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    min-width: 0;
+    list-style: none;
+    cursor: pointer;
+    padding: 9px 11px;
+    color: var(--text-muted);
+  }
+  .episode > summary::-webkit-details-marker { display: none; }
+  .episode > summary:hover { background: var(--surface-alt); }
+  .episode-caret {
+    width: 0;
+    height: 0;
+    border-left: 4px solid var(--text-faint);
+    border-top: 3px solid transparent;
+    border-bottom: 3px solid transparent;
+    transition: transform 0.14s;
+  }
+  .episode[open] .episode-caret { transform: rotate(90deg); }
+  .episode-title { color: var(--target); font-size: 0.7rem; font-weight: 750; text-transform: uppercase; letter-spacing: 0.09em; }
+  .episode-stats { color: var(--text); font-size: 0.72rem; font-variant-numeric: tabular-nums; }
+  .episode-tools {
+    margin-left: auto;
+    min-width: 0;
+    max-width: 50%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--text-faint);
+    font-family: var(--font-mono);
+    font-size: 0.65rem;
+  }
+  .episode-preview {
+    padding: 0 12px 10px 32px;
+    color: var(--text-muted);
+    font-size: 0.75rem;
+    line-height: 1.45;
+  }
   .activity {
     display: flex;
     flex-direction: column;
     gap: 10px;
+    padding: 11px;
+    border-top: 1px solid var(--border);
+    background: var(--surface);
   }
+  .episode-note { color: var(--text-faint); font-size: 0.66rem; font-family: var(--font-mono); }
   .turn {
     display: flex;
     flex-direction: column;

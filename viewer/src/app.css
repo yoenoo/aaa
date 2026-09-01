@@ -1,43 +1,71 @@
 :root {
-  /* Neutrals — slate (cool, enterprise) */
-  --bg: #f8fafc;
-  --surface: #ffffff;
-  --surface-alt: #f1f5f9;
-  --surface-sunk: #f8fafc;
-  --border: #e2e8f0;
-  --border-strong: #cbd5e1;
-  --text: #0f172a;
-  --text-muted: #475569;
-  --text-faint: #94a3b8;
+  color-scheme: dark;
+  --bg: #0b0e14;
+  --surface: #121722;
+  --surface-alt: #171d2a;
+  --surface-sunk: #0e131c;
+  --border: #232b3b;
+  --border-strong: #354056;
+  --text: #e7ebf3;
+  --text-muted: #96a0b5;
+  --text-faint: #5f6b82;
 
-  /* Accents — a single primary, used sparingly */
-  --accent: #2563eb;           /* blue-600, used for links / focus only */
-  --accent-ink: #1d4ed8;
-  --accent-soft: #eff6ff;
+  --accent: #6f91f5;
+  --accent-ink: #a9bdfd;
+  --accent-soft: #18233d;
 
-  /* Role markers — desaturated, legible, not decorative */
-  --user: #0f766e;             /* teal-700 */
-  --auditor: #1e40af;          /* blue-800 */
-  --target: #c2410c;           /* orange-700 */
+  --user: #54b69f;
+  --auditor: #6f91f5;
+  --target: #e0a33c;
 
-  /* Semantic */
-  --warning: #b45309;          /* amber-700 */
-  --warning-soft: #fef3c7;
-  --warning-ink: #78350f;
-  --danger: #b91c1c;           /* red-700 */
-  --danger-soft: #fee2e2;
-  --danger-ink: #7f1d1d;
-  --git: #475569;              /* slate-600 */
+  --warning: #d99a3c;
+  --warning-soft: #332817;
+  --warning-ink: #f2c675;
+  --danger: #ed5f63;
+  --danger-soft: #351b21;
+  --danger-ink: #ffafb2;
+  --good: #48bd88;
+  --good-soft: #142a24;
+  --git: #96a0b5;
 
-  /* Depth — subtle */
-  --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.04);
-  --shadow-md: 0 1px 3px rgba(15, 23, 42, 0.06), 0 4px 12px rgba(15, 23, 42, 0.04);
-  --radius: 8px;
-  --radius-sm: 6px;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.32);
+  --shadow-md: 0 1px 2px rgba(0, 0, 0, 0.38), 0 12px 30px -18px rgba(0, 0, 0, 0.72);
+  --radius: 10px;
+  --radius-sm: 7px;
 
   /* Type */
   --font-sans: 'Inter', ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
   --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, Monaco, Consolas, monospace;
+}
+
+:root[data-theme='light'] {
+  color-scheme: light;
+  --bg: #f6f8fb;
+  --surface: #ffffff;
+  --surface-alt: #f4f6fa;
+  --surface-sunk: #eef1f6;
+  --border: #dde3ec;
+  --border-strong: #c4ccd9;
+  --text: #141a26;
+  --text-muted: #54607a;
+  --text-faint: #8792a6;
+  --accent: #3a63e0;
+  --accent-ink: #294fc1;
+  --accent-soft: #eaf0ff;
+  --user: #21836e;
+  --auditor: #3a63e0;
+  --target: #b9791b;
+  --warning: #c47f1e;
+  --warning-soft: #fff4dc;
+  --warning-ink: #85500c;
+  --danger: #d13b40;
+  --danger-soft: #fff0f0;
+  --danger-ink: #9e292e;
+  --good: #2f9d6d;
+  --good-soft: #e9f8f1;
+  --git: #6a7385;
+  --shadow-sm: 0 1px 2px rgba(20, 26, 38, 0.06);
+  --shadow-md: 0 1px 2px rgba(20, 26, 38, 0.06), 0 10px 28px -16px rgba(20, 26, 38, 0.28);
 }
 
 * { box-sizing: border-box; }
@@ -54,6 +82,8 @@ html, body {
   -moz-osx-font-smoothing: grayscale;
   font-feature-settings: 'cv11', 'ss01', 'ss03';
 }
+
+html, body, #app { min-height: 100%; }
 
 h1, h2, h3, h4 { font-weight: 600; letter-spacing: -0.015em; }
 
@@ -79,7 +109,7 @@ pre {
   margin: 0;
 }
 
-::selection { background: #dbeafe; color: inherit; }
+::selection { background: color-mix(in srgb, var(--accent) 30%, transparent); color: inherit; }
 
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-track { background: transparent; }
