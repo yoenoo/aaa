@@ -88,13 +88,17 @@
   function debugQuotesFor(id: string): string[] {
     return (highlightsByEvent.get(id) || []).filter((h) => h.debug).map((h) => h.dq).filter(Boolean);
   }
-  // highlights for an event whose quote falls within a given text slice (a turn)
+  // highlights for an event whose quote falls within a given text slice (a turn).
+  // Judge quotes on shell commands are unescaped, but the content stores them
+  // JSON-escaped, so also test an unescaped copy of the text.
   function hlsInText(id: string, ...texts: string[]): HL[] {
     const joined = texts.join('\n');
-    return (highlightsByEvent.get(id) || []).filter((h) => joined.includes(h.dq));
+    const unesc = unescapeJsonStr(joined);
+    return (highlightsByEvent.get(id) || []).filter((h) => joined.includes(h.dq) || unesc.includes(h.dq));
   }
   function quoteInText(id: string, text: string): boolean {
-    return (highlightsByEvent.get(id) || []).some((h) => text.includes(h.dq));
+    const unesc = unescapeJsonStr(text);
+    return (highlightsByEvent.get(id) || []).some((h) => text.includes(h.dq) || unesc.includes(h.dq));
   }
   // A judge quote on a target tool call is the escaped "[id] fn({\"command\": \"…\"})"
   // form; the card now shows only the unescaped command, so pull the command out of
@@ -158,11 +162,11 @@
   type TTurn = { no: string; preamble: string; calls: TCall[] };
 
   function preambleOf(body: string): string {
-    const i = body.search(/\[id:\s*call_\w+\]/);
+    const i = body.search(/\[id:\s*[^\]]+\]/);
     return (i === -1 ? body : body.slice(0, i)).trim();
   }
   function parseCalls(body: string): TCall[] {
-    const re = /\[id:\s*(call_\w+)\]/g;
+    const re = /\[id:\s*([^\]]+?)\]/g;
     const marks: { idx: number; id: string }[] = [];
     let m: RegExpExecArray | null;
     while ((m = re.exec(body))) marks.push({ idx: m.index, id: m[1] });
@@ -229,7 +233,7 @@
   // A parsed target tool call: "[id: call_X] fn({...json...})" -> fn + args object.
   // The log truncates long args, leaving invalid JSON; recover the command field.
   function parseCall(head: string): { fn: string; args: Record<string, unknown> | null; argStr: string } {
-    const m = head.match(/^\s*\[id:\s*call_\w+\]\s*(\w+)\(([\s\S]*)\)\s*$/);
+    const m = head.match(/^\s*\[id:\s*[^\]]+?\]\s*(\w+)\(([\s\S]*)\)\s*$/);
     if (!m) return { fn: fnOf(head), args: null, argStr: head.trim() };
     const argStr = m[2].trim();
     let args: Record<string, unknown> | null = null;
