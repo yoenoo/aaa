@@ -63,7 +63,7 @@
   });
 
   onMount(() => {
-    const saved = window.localStorage.getItem('petri-viewer-theme');
+    const saved = window.localStorage.getItem('loupe-viewer-theme');
     theme = saved === 'light' ? 'light' : 'dark';
     document.documentElement.dataset.theme = theme;
   });
@@ -107,7 +107,7 @@
   function toggleTheme() {
     theme = theme === 'dark' ? 'light' : 'dark';
     document.documentElement.dataset.theme = theme;
-    window.localStorage.setItem('petri-viewer-theme', theme);
+    window.localStorage.setItem('loupe-viewer-theme', theme);
   }
 
   function cycleExpand() {
@@ -262,7 +262,7 @@
   <main class="reader-shell">
     <header class="topbar">
       <button class="brand" onclick={onBack} disabled={!onBack} title="All audits">
-        <span class="glyph"></span><span>petriscope</span>
+        <span class="glyph"></span><span>loupe</span>
       </button>
       <span class="slash">/</span>
       <div class="run-title" title={transcript.title}>

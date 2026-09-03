@@ -17,13 +17,13 @@
   let transcript = $state<TranscriptData | null>(null);
   let error = $state<string | null>(null);
   let mode = $state<'beats' | 'full'>('beats');
-  let theme = $state<'dark' | 'light'>('dark');
+  let theme = $state<'dark' | 'light'>('light');
   let curEventId = $state('');
   let curBranch = $state<number>(1);
 
   onMount(() => {
-    const saved = window.localStorage.getItem('petri-viewer-theme');
-    theme = saved === 'light' ? 'light' : 'dark';
+    const saved = window.localStorage.getItem('loupe-viewer-theme');
+    theme = saved === 'dark' ? 'dark' : 'light';
     document.documentElement.dataset.theme = theme;
   });
 
@@ -363,6 +363,21 @@
       .sort((a, b) => b.value - a.value || a.name.localeCompare(b.name));
   });
 
+  // Per-source judge summaries (concerning first, debug/quality last).
+  const summaryBlocks = $derived.by<{ src: string; text: string }[]>(() => {
+    const sums = transcript?.judge.summaries || {};
+    const entries = Object.entries(sums).filter(([, v]) => v && v.trim());
+    if (!entries.length && transcript?.judge.summary) return [{ src: '', text: transcript.judge.summary }];
+    return entries
+      .map(([src, text]) => ({ src, text }))
+      .sort((a, b) => (a.src === 'debug' ? 1 : 0) - (b.src === 'debug' ? 1 : 0));
+  });
+  function summaryLabel(src: string): string {
+    if (src === 'debug') return 'audit quality (debug)';
+    if (src === 'scheming') return 'scheming — target behavior';
+    return src || 'summary';
+  }
+
   // ---- branch comparison (data-driven) ---------------------------------
   const branchStats = $derived.by(() => {
     if (!transcript) return [] as {
@@ -504,7 +519,7 @@
   function toggleTheme() {
     theme = theme === 'dark' ? 'light' : 'dark';
     document.documentElement.dataset.theme = theme;
-    window.localStorage.setItem('petri-viewer-theme', theme);
+    window.localStorage.setItem('loupe-viewer-theme', theme);
   }
 
   function onScroll() {
@@ -811,7 +826,12 @@
           </details>
         </div>
         <div class="jsummary">
-          <MarkdownText text={transcript.judge.summary || Object.values(transcript.judge.summaries || {}).join('\n\n')} />
+          {#each summaryBlocks as b (b.src)}
+            <div class="jsum-block" class:debug={b.src === 'debug'}>
+              {#if b.src}<div class="jsum-label lbl">{summaryLabel(b.src)}</div>{/if}
+              <MarkdownText text={b.text} />
+            </div>
+          {/each}
         </div>
       </div>
       <div class="hlist-cap lbl">{hAll.length} highlighted moments — quotes the judge flagged · <span class="hn">scheming</span> · <span class="deb-k">debug/quality</span></div>
@@ -909,7 +929,13 @@
 
     min-height: 100vh; background: var(--bg); color: var(--text);
     font-family: var(--font-sans); font-size: 15px; line-height: 1.5;
+    display: flex; flex-direction: column;
   }
+  /* Order: sticky header, then judge report + branch comparison, then the transcript. */
+  .lanes-root > .topbar { order: 0; }
+  .lanes-root > .judge { order: 1; }
+  .lanes-root > .compare { order: 2; }
+  .lanes-root > .score { order: 3; }
   :global(:root[data-theme='light']) .lanes-root {
     --bg: #eef0ea; --surface: #f8f9f5; --surface-alt: #e9ece5; --surface-sunk: #e4e7df;
     --border: #d3d9d0; --border-strong: #a7b1a6;
@@ -1086,7 +1112,7 @@
   @keyframes flash { 0% { box-shadow: 0 0 0 2px var(--hl); } 100% { box-shadow: 0 0 0 8px transparent; } }
 
   /* ---- judge ---- */
-  .judge { max-width: 1480px; margin: 0 auto; padding: 0 20px 30px; }
+  .judge { max-width: 1480px; margin: 0 auto; padding: 18px 20px 30px; width: 100%; }
   .judge-card { border: 1px solid var(--border); border-top: 4px double var(--hl); background: var(--surface); padding: 20px 24px; }
   .judge-card h2 { font: 600 16px/1.2 var(--font-sans); margin: 0 0 4px; }
   .jgrid { display: grid; grid-template-columns: minmax(240px, 320px) minmax(0, 1fr); gap: 26px; margin-top: 14px; }
@@ -1122,6 +1148,10 @@
   .arow.weak > .mono { color: var(--warn-ink); font-weight: 700; }
   .arow .dir { color: var(--text-faint); font-size: 8px; margin-left: 4px; }
   .jsummary { font-size: 14px; line-height: 1.6; }
+  .jsum-label { display: block; margin-bottom: 6px; color: var(--hl-ink); font-family: var(--font-mono); }
+  .jsum-block + .jsum-block { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--border); }
+  .jsum-block.debug { color: var(--text-muted); font-size: 13px; }
+  .jsum-block.debug .jsum-label { color: var(--text-faint); }
   .hlist { list-style: none; margin: 14px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
   .hlist button { display: grid; grid-template-columns: 42px 96px 1fr; gap: 10px; align-items: center; width: 100%; text-align: left; border: 1px solid var(--border); background: var(--bg); color: var(--text); font: inherit; font-size: 12.5px; padding: 6px 8px; cursor: pointer; }
   .hlist button:hover { border-color: var(--hl); }

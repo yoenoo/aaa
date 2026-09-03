@@ -1,4 +1,4 @@
-// Schema for a petri audit transcript. Produced by dump_log.py, consumed by App.svelte.
+// Schema for an audit transcript. Produced by dump_log.py, consumed by App.svelte.
 
 export interface TranscriptData {
   id: string;
