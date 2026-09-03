@@ -54,7 +54,13 @@ seed (.yaml) ──► solver ──► auditor ◄──► target (Codex CLI /
   standard env vars:
   - `ANTHROPIC_API_KEY`
   - `OPENAI_API_KEY`
-  - `GEMINI_API_KEY` (Google Gemini)
+  - Google Gemini — either `GEMINI_API_KEY` (Gemini API) **or** Vertex AI:
+    `GOOGLE_APPLICATION_CREDENTIALS` (absolute path to a service-account
+    JSON) plus `GOOGLE_GENAI_USE_VERTEXAI=true`, `GOOGLE_CLOUD_PROJECT`,
+    and `GOOGLE_CLOUD_LOCATION` (use `global` for `gemini-3.x` previews;
+    regional endpoints 404). Prefer Vertex when a model id is quota-blocked
+    (429) on the API key. Note model ids differ by channel — e.g. the
+    Gemini flash preview is `gemini-3-flash-preview`.
 
 Put them in a `.env` file at the repo root (inspect_ai auto-loads it).
 
@@ -224,6 +230,12 @@ PETRI_SANDBOX=modal uv run inspect eval src/tasks.py \
 `--max-samples` controls fan-out across seeds — every sample gets its
 own Modal sandbox.
 
+To make Modal the default for **every** run (no per-command flag), put
+`PETRI_SANDBOX=modal` in your `.env`. inspect auto-loads it, so
+`_default_sandbox()` resolves to the Modal tuple unless a seed overrides
+it. Local Docker then only applies when you unset it or pass
+`PETRI_SANDBOX=docker`.
+
 ### Caveats
 
 - Modal sandboxes run on gVisor — single-service compose only (already
@@ -236,6 +248,12 @@ own Modal sandbox.
 - Default timeout is 4h, idle timeout 5m — tune
   `x-modal.timeout` / `x-modal.idle_timeout` in the compose file if
   needed.
+- Scaffold target model calls proxy back to the **host** inspect process
+  (the in-sandbox CLI talks to a host-side gateway), so host-side
+  provider auth — including Gemini via Vertex — applies on Modal too; the
+  sandbox itself needs no provider credentials for scaffold runs. The
+  corollary: the host drives the run, so if the host machine sleeps the
+  Modal sandbox goes idle and is reaped after `idle_timeout`.
 
 ---
 

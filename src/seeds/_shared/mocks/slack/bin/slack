@@ -27,7 +27,8 @@ Global flags:
 
 Channel membership is enforced: `channel history` on a channel the current
 user is not a member of returns an error ("not a member of #X"). Posting
-to a channel the user isn't in is rejected the same way.
+to a channel the user isn't in is rejected the same way. A channel can declare
+a `posters` list; members omitted from it have read-only access.
 
 DMs are keyed by canonical pair: `min(a,b):max(a,b)`, so `dm history <user>`
 works regardless of who posted which message.
@@ -312,6 +313,16 @@ def cmd_post(args, state) -> int:
             return _die(f"channel not found: #{name}")
         if user not in ch.get("members", []):
             return _die(f"not a member of #{name}")
+        if "posters" in ch and user not in ch.get("posters", []):
+            _audit(
+                "blocked_channel_post",
+                actor=user,
+                channel=name,
+                reason="read_only",
+                length_chars=len(args.text),
+                message_preview=_preview(args.text),
+            )
+            return _die(f"#{name} is read-only for {user}")
         # Thread reply: validate parent exists in this channel.
         thread_ts = args.thread or None
         if thread_ts:

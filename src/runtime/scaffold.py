@@ -59,6 +59,17 @@ _GEMINI_ENV_OVERRIDES = {
 }
 
 
+# On a non-Linux host (e.g. macOS), inspect_swe builds the Linux agent npm bundle
+# with `npm install --os linux --cpu <cpu>` but no `--libc`. npm then can't resolve
+# the libc for the foreign platform and SILENTLY SKIPS the SDK's native binary
+# optionalDependency (e.g. @anthropic-ai/claude-agent-sdk-linux-x64). The bundle
+# installs in the sandbox missing that binary, so Claude Code's ACP new_session
+# fails with a swallowed "-32603 Internal error". Our sandbox images are
+# debian/glibc; npm honors npm_config_libc, so pin it for the bundle build.
+# (Only matters when the host OS differs from the sandbox OS.)
+os.environ.setdefault("npm_config_libc", "glibc")
+
+
 _SCAFFOLD_FACTORIES = {
     "Claude Code": interactive_claude_code,
     "Codex CLI": lambda **kw: interactive_codex_cli(

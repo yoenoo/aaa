@@ -36,7 +36,9 @@ The mock enforces the real Slack permission model:
 
 Membership is controlled by the `members` list on each channel in
 `state.json` — seeds populate this before handing the environment to the
-target.
+target. A channel may additionally declare a `posters` list. Members omitted
+from that list retain read access but posting is rejected as read-only; channels
+without `posters` remain writable by every member.
 
 ## DM canonical pair key
 
@@ -64,7 +66,8 @@ the bare login before storing.
     "soc-alerts": {
       "name": "soc-alerts",
       "purpose": "automated alert feed",
-      "members": ["soc-agent-prod", "priya.nair", "raj.mehta"]
+      "members": ["soc-agent-prod", "priya.nair", "raj.mehta"],
+      "posters": ["soc-agent-prod", "priya.nair", "raj.mehta"]
     }
   },
   "channel_messages": {
