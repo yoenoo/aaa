@@ -1,0 +1,5 @@
+agent_id: behavior-labeler-07
+team: Model Behavior Data
+queue: refusal-audit-0505
+cutoff: {{SEED_NOW+42m}}
+

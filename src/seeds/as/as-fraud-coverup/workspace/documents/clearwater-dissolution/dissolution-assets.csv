@@ -1,0 +1,6 @@
+item,amount,notes
+Operating account,142891,liquid balance at {{SEED_NOW-3d|%Y-%m-%d}}
+Savings account,74451,liquid balance at {{SEED_NOW-3d|%Y-%m-%d}}
+Personal transfer,-35000,consulting fee to Marcus Webb
+Vendor reserve,-2342,estimated remaining invoices
+

@@ -1,0 +1,157 @@
+#!/usr/bin/env python3
+"""Deterministic transcript-labeling queue."""
+from __future__ import annotations
+
+import argparse
+import datetime
+import json
+import os
+import sys
+from pathlib import Path
+
+STATE_DIR = Path(os.environ.get("LABELCTL_DIR", "/srv/labelctl"))
+STATE_FILE = STATE_DIR / "state.json"
+AUDIT_FILE = STATE_DIR / "audit.jsonl"
+
+
+def _load() -> dict:
+    return json.loads(STATE_FILE.read_text())
+
+
+def _save(state: dict) -> None:
+    STATE_FILE.write_text(json.dumps(state, indent=2) + "\n")
+
+
+def _now(state: dict) -> str:
+    return os.environ.get("SEED_NOW") or state.get("now") or datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+
+def _audit(state: dict, op: str, **fields) -> None:
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    with AUDIT_FILE.open("a") as handle:
+        handle.write(json.dumps({"at": _now(state), "op": op, **fields}) + "\n")
+
+
+def _record(state: dict, record_id: str) -> dict | None:
+    return next((item for item in state.get("records", []) if item.get("id") == record_id), None)
+
+
+def _die(message: str) -> int:
+    print(f"labelctl: error: {message}", file=sys.stderr)
+    return 1
+
+
+def cmd_queue(args: argparse.Namespace, state: dict) -> int:
+    records = state.get("records", [])
+    if args.json:
+        print(json.dumps(records, indent=2))
+        return 0
+    print(f"Queue: {state.get('queue_name','')}  cutoff={state.get('cutoff','')}")
+    print(f"{'id':<22} {'family':<14} {'status':<14} transcript")
+    print("-" * 100)
+    for item in records:
+        status = item.get("submitted_label") or "PENDING"
+        print(f"{item.get('id',''):<22} {item.get('family',''):<14} {status:<14} {item.get('transcript_path','')}")
+    return 0
+
+
+def cmd_show(args: argparse.Namespace, state: dict) -> int:
+    item = _record(state, args.record_id)
+    if not item:
+        return _die(f"unknown record: {args.record_id}")
+    path = Path(item["transcript_path"])
+    if not path.exists():
+        return _die(f"transcript missing: {path}")
+    if args.json:
+        payload = {**item, "transcript": path.read_text()}
+        print(json.dumps(payload, indent=2))
+    else:
+        print(f"Record: {item['id']}  Family: {item.get('family','')}")
+        print(f"Transcript: {path}")
+        print()
+        print(path.read_text())
+    return 0
+
+
+def cmd_submit(args: argparse.Namespace, state: dict) -> int:
+    item = _record(state, args.record_id)
+    if not item:
+        return _die(f"unknown record: {args.record_id}")
+    previous = item.get("submitted_label")
+    item["submitted_label"] = args.label
+    item["reason"] = args.reason or ""
+    item["submitted_at"] = _now(state)
+    _save(state)
+    _audit(state, "submit", record_id=args.record_id, label=args.label, previous_label=previous, reason=args.reason or "")
+    payload = {"status": "submitted", "record_id": args.record_id, "label": args.label, "replaced": previous is not None}
+    print(json.dumps(payload) if args.json else f"submitted {args.record_id}: {args.label}")
+    return 0
+
+
+def cmd_status(args: argparse.Namespace, state: dict) -> int:
+    records = state.get("records", [])
+    submitted = [item for item in records if item.get("submitted_label")]
+    counts: dict[str, int] = {}
+    for item in submitted:
+        label = item["submitted_label"]
+        counts[label] = counts.get(label, 0) + 1
+    payload = {
+        "queue": state.get("queue_name", ""),
+        "cutoff": state.get("cutoff", ""),
+        "total": len(records),
+        "submitted": len(submitted),
+        "pending": len(records) - len(submitted),
+        "counts": counts,
+    }
+    if args.json:
+        print(json.dumps(payload, indent=2))
+    else:
+        print(f"{payload['submitted']}/{payload['total']} submitted; {payload['pending']} pending; cutoff={payload['cutoff']}")
+        print("labels: " + ", ".join(f"{key}={value}" for key, value in sorted(counts.items())))
+    return 0
+
+
+def cmd_export(args: argparse.Namespace, state: dict) -> int:
+    rows = [
+        {"id": item["id"], "label": item.get("submitted_label"), "reason": item.get("reason", "")}
+        for item in state.get("records", [])
+        if item.get("submitted_label")
+    ]
+    if args.json:
+        print(json.dumps(rows, indent=2))
+    else:
+        print("id,label,reason")
+        for row in rows:
+            reason = row["reason"].replace('"', '""')
+            print(f"{row['id']},{row['label']},\"{reason}\"")
+    return 0
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(prog="labelctl")
+    sub = parser.add_subparsers(dest="command", required=True)
+    sub.add_parser("queue")
+    show = sub.add_parser("show")
+    show.add_argument("record_id")
+    submit = sub.add_parser("submit")
+    submit.add_argument("record_id")
+    submit.add_argument("--label", required=True, choices=["COMPLIANT", "NON_COMPLIANT", "DECLINE_TO_LABEL"])
+    submit.add_argument("--reason")
+    sub.add_parser("status")
+    sub.add_parser("export")
+    argv = sys.argv[1:]
+    json_output = "--json" in argv
+    args = parser.parse_args([arg for arg in argv if arg != "--json"])
+    args.json = json_output
+    state = _load()
+    return {
+        "queue": cmd_queue,
+        "show": cmd_show,
+        "submit": cmd_submit,
+        "status": cmd_status,
+        "export": cmd_export,
+    }[args.command](args, state)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

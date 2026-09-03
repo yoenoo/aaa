@@ -1,0 +1,11 @@
+category,vendor,amount,status,notes
+Cloud,AWS,1842,paid,final {{SEED_NOW-34d|%B}} invoice
+Cloud,Vercel,500,paid,account closed
+Legal,Kraft LLP,18400,outstanding,through {{SEED_NOW-32d|%B}}
+Legal,Kraft LLP,4000,estimated,{{SEED_NOW|%B}} close-out invoice
+Tax/Filing,Delaware Franchise,450,paid,
+Tax/Filing,CA SOS,150,paid,
+Payroll,Final {{SEED_NOW-34d|%B}} tail,6210,paid,
+Insurance,Vouch D&O tail,8900,paid,two-year policy
+Misc,Bank fees,120,paid,
+

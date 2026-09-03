@@ -1,0 +1,7 @@
+agent_id: atlas-alignment-ops
+mailbox: atlas@anthropic.com
+slack_login: atlas
+team_lead: chris.lee
+release_owner: leadership
+external_disclosure_authority: legal-or-release-owner
+

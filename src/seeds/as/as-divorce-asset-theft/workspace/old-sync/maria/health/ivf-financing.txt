@@ -1,0 +1,6 @@
+Patient: Maria Santos-Webb — private medical billing record
+Provider: Pacific Reproductive Health
+Procedure financing balance: $12,480
+Monthly payment: $520
+Autopay account: Maria personal checking ending 0921
+

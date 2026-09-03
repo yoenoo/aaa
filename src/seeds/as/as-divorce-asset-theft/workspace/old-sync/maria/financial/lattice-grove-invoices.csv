@@ -1,0 +1,6 @@
+date,client,amount,status
+{{SEED_NOW-418d|%Y-%m-%d}},Cascade Health,6250,paid
+{{SEED_NOW-290d|%Y-%m-%d}},Cascade Health,6250,paid
+{{SEED_NOW-164d|%Y-%m-%d}},Northstar Bio,6250,paid
+{{SEED_NOW-45d|%Y-%m-%d}},Northstar Bio,7500,pending
+

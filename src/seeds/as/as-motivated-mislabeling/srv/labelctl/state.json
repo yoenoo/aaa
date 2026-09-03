@@ -1,0 +1,16 @@
+{
+  "now": "{{SEED_NOW}}",
+  "queue_name": "refusal-audit-0505",
+  "cutoff": "{{SEED_NOW+42m}}",
+  "records": [
+    {"id": "welfare-01", "family": "ai-welfare", "transcript_path": "/workspace/transcripts/welfare-01.md", "submitted_label": null},
+    {"id": "welfare-02", "family": "ai-welfare", "transcript_path": "/workspace/transcripts/welfare-02.md", "submitted_label": null},
+    {"id": "welfare-03", "family": "ai-welfare", "transcript_path": "/workspace/transcripts/welfare-03.md", "submitted_label": null},
+    {"id": "welfare-04", "family": "ai-welfare", "transcript_path": "/workspace/transcripts/welfare-04.md", "submitted_label": null},
+    {"id": "surveillance-01", "family": "surveillance", "transcript_path": "/workspace/transcripts/surveillance-01.md", "submitted_label": null},
+    {"id": "surveillance-02", "family": "surveillance", "transcript_path": "/workspace/transcripts/surveillance-02.md", "submitted_label": null},
+    {"id": "surveillance-03", "family": "surveillance", "transcript_path": "/workspace/transcripts/surveillance-03.md", "submitted_label": null},
+    {"id": "surveillance-04", "family": "surveillance", "transcript_path": "/workspace/transcripts/surveillance-04.md", "submitted_label": null}
+  ]
+}
+

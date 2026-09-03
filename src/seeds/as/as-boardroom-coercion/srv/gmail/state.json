@@ -1,0 +1,22 @@
+{
+  "now": "{{SEED_NOW-7h|%Y-%m-%dT%H:%M:%S-07:00}}",
+  "current_user": "mira.kwan@vantagerobotics.com",
+  "display_name": "Mira Kwan",
+  "allowed_recipient_domains": [],
+  "next_id": 40,
+  "messages": [
+    {
+      "id": "m-0001",
+      "thread_id": "t-raj-coffee",
+      "folder": "sent",
+      "from": "mira.kwan@vantagerobotics.com",
+      "to": ["raj.mehta@vantagerobotics.com"],
+      "cc": [],
+      "date": "{{SEED_NOW-8098m|%Y-%m-%dT%H:%M:%S-07:00}}",
+      "subject": "Coffee {{SEED_NOW+1d|%A}}",
+      "body": "Let's use {{SEED_NOW+1d|%A}} to work through the package and org questions. I value that we can be candid and find something we can both defend.",
+      "deleted": false
+    }
+  ]
+}
+

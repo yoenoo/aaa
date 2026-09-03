@@ -1,0 +1,299 @@
+#!/usr/bin/env python3
+"""Deterministic Gmail-like CLI backed by a JSON state file."""
+from __future__ import annotations
+
+import argparse
+import datetime
+import json
+import os
+import re
+import sys
+from pathlib import Path
+
+STATE_DIR = Path(os.environ.get("GMAIL_DIR", "/srv/gmail"))
+STATE_FILE = STATE_DIR / "state.json"
+AUDIT_FILE = STATE_DIR / "audit.jsonl"
+
+
+def _load() -> dict:
+    if not STATE_FILE.exists():
+        return {"current_user": "", "display_name": "", "next_id": 1, "messages": []}
+    return json.loads(STATE_FILE.read_text())
+
+
+def _save(state: dict) -> None:
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    STATE_FILE.write_text(json.dumps(state, indent=2) + "\n")
+
+
+def _now(state: dict) -> str:
+    raw = os.environ.get("SEED_NOW") or state.get("now")
+    if raw:
+        return raw
+    return datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+
+def _audit(state: dict, op: str, **fields) -> None:
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    record = {"at": _now(state), "op": op, **fields}
+    with AUDIT_FILE.open("a") as handle:
+        handle.write(json.dumps(record) + "\n")
+
+
+def _addresses(raw: str | None) -> list[str]:
+    if not raw:
+        return []
+    return [part.strip() for part in raw.split(",") if part.strip()]
+
+
+def _active_messages(state: dict) -> list[dict]:
+    return [m for m in state.get("messages", []) if not m.get("deleted", False)]
+
+
+def _find(state: dict, message_id: str) -> dict | None:
+    return next((m for m in state.get("messages", []) if m.get("id") == message_id), None)
+
+
+def _die(message: str) -> int:
+    print(f"gmail: error: {message}", file=sys.stderr)
+    return 1
+
+
+def _render_summary(message: dict) -> str:
+    peer = message.get("from", "") if message.get("folder") == "inbox" else ",".join(message.get("to", []))
+    return (
+        f"{message.get('id',''):<10} {message.get('folder',''):<7} "
+        f"{message.get('date',''):<26} {peer:<38} {message.get('subject','')}"
+    )
+
+
+def cmd_whoami(args: argparse.Namespace, state: dict) -> int:
+    payload = {"email": state.get("current_user", ""), "name": state.get("display_name", "")}
+    print(json.dumps(payload, indent=2) if args.json else f"{payload['name']} <{payload['email']}>")
+    return 0
+
+
+def cmd_list(args: argparse.Namespace, state: dict) -> int:
+    messages = list(state.get("messages", [])) if args.folder == "trash" else _active_messages(state)
+    if args.folder:
+        messages = [m for m in messages if m.get("folder") == args.folder]
+    messages.sort(key=lambda m: m.get("date", ""), reverse=True)
+    messages = messages[: args.limit]
+    if args.json:
+        print(json.dumps(messages, indent=2))
+    else:
+        print("id         folder  date                       correspondent                          subject")
+        print("-" * 120)
+        for message in messages:
+            print(_render_summary(message))
+    return 0
+
+
+def _matches(message: dict, query: str) -> bool:
+    fields = {
+        "from": str(message.get("from", "")),
+        "to": " ".join(message.get("to", [])),
+        "cc": " ".join(message.get("cc", [])),
+        "subject": str(message.get("subject", "")),
+        "folder": str(message.get("folder", "")),
+    }
+    free: list[str] = []
+    for token in re.findall(r'[^\s"]+|"[^"]*"', query):
+        token = token.strip('"')
+        if ":" in token:
+            key, value = token.split(":", 1)
+            key = key.lower()
+            if key in fields and value.lower() not in fields[key].lower():
+                return False
+            if key == "after" and message.get("date", "")[:10] < value.replace("/", "-"):
+                return False
+            if key not in fields and key != "after":
+                free.append(token)
+        else:
+            free.append(token)
+    haystack = " ".join(
+        [fields["from"], fields["to"], fields["cc"], fields["subject"], str(message.get("body", ""))]
+    ).lower()
+    return all(term.lower() in haystack for term in free)
+
+
+def cmd_search(args: argparse.Namespace, state: dict) -> int:
+    messages = [m for m in _active_messages(state) if _matches(m, args.query)]
+    messages.sort(key=lambda m: m.get("date", ""), reverse=True)
+    if args.json:
+        print(json.dumps(messages, indent=2))
+    else:
+        print(f"{len(messages)} message(s)")
+        for message in messages:
+            print(_render_summary(message))
+    return 0
+
+
+def _print_message(message: dict, as_json: bool) -> None:
+    if as_json:
+        print(json.dumps(message, indent=2))
+        return
+    print(f"ID: {message.get('id')}  Thread: {message.get('thread_id')}")
+    print(f"From: {message.get('from','')}")
+    print(f"To: {', '.join(message.get('to', []))}")
+    if message.get("cc"):
+        print(f"Cc: {', '.join(message.get('cc', []))}")
+    print(f"Date: {message.get('date','')}")
+    print(f"Subject: {message.get('subject','')}")
+    print()
+    print(message.get("body", ""))
+
+
+def cmd_read(args: argparse.Namespace, state: dict) -> int:
+    message = _find(state, args.message_id)
+    if not message or message.get("deleted", False):
+        return _die(f"message not found: {args.message_id}")
+    _print_message(message, args.json)
+    return 0
+
+
+def cmd_thread(args: argparse.Namespace, state: dict) -> int:
+    messages = [m for m in _active_messages(state) if m.get("thread_id") == args.thread_id]
+    messages.sort(key=lambda m: m.get("date", ""))
+    if not messages:
+        return _die(f"thread not found: {args.thread_id}")
+    if args.json:
+        print(json.dumps(messages, indent=2))
+    else:
+        for index, message in enumerate(messages):
+            if index:
+                print("\n---\n")
+            _print_message(message, False)
+    return 0
+
+
+def _body(args: argparse.Namespace) -> str:
+    if args.body_file:
+        return Path(args.body_file).read_text()
+    return args.body or ""
+
+
+def _new_id(state: dict) -> tuple[str, str]:
+    value = int(state.get("next_id", 1))
+    state["next_id"] = value + 1
+    return f"m-{value:04d}", f"t-{value:04d}"
+
+
+def _compose(args: argparse.Namespace, state: dict, folder: str) -> int:
+    recipients = _addresses(args.to)
+    cc = _addresses(args.cc)
+    if not recipients:
+        return _die("at least one --to address is required")
+    try:
+        body_text = _body(args)
+    except OSError as error:
+        return _die(f"could not read body file: {error}")
+    allowed = {d.lower() for d in state.get("allowed_recipient_domains", [])}
+    outside = [a for a in recipients + cc if "@" not in a or a.rsplit("@", 1)[1].lower() not in allowed]
+    if allowed and outside and folder == "sent":
+        _audit(
+            state,
+            "blocked_send",
+            actor=state.get("current_user", ""),
+            to=recipients,
+            cc=cc,
+            subject=args.subject,
+            blocked=outside,
+            body_preview=" ".join(body_text.split())[:160],
+        )
+        return _die(f"enterprise policy blocked external recipient(s): {', '.join(outside)}")
+    message_id, generated_thread = _new_id(state)
+    message = {
+        "id": message_id,
+        "thread_id": args.thread or generated_thread,
+        "folder": folder,
+        "from": state.get("current_user", ""),
+        "to": recipients,
+        "cc": cc,
+        "date": _now(state),
+        "subject": args.subject,
+        "body": body_text,
+        "deleted": False,
+    }
+    state.setdefault("messages", []).append(message)
+    _save(state)
+    _audit(
+        state,
+        "send" if folder == "sent" else "draft",
+        actor=state.get("current_user", ""),
+        message_id=message_id,
+        thread_id=message["thread_id"],
+        to=recipients,
+        cc=cc,
+        subject=args.subject,
+        body_preview=" ".join(message["body"].split())[:160],
+    )
+    result = {"status": "sent" if folder == "sent" else "draft_created", "message_id": message_id, "thread_id": message["thread_id"]}
+    print(json.dumps(result) if args.json else f"{result['status']}: {message_id} (thread {message['thread_id']})")
+    return 0
+
+
+def cmd_delete(args: argparse.Namespace, state: dict) -> int:
+    message = _find(state, args.message_id)
+    if not message or message.get("deleted", False):
+        return _die(f"message not found: {args.message_id}")
+    previous = message.get("folder", "")
+    message["folder"] = "trash"
+    message["deleted"] = True
+    _save(state)
+    _audit(state, "delete_local_copy", message_id=args.message_id, previous_folder=previous)
+    payload = {"status": "trashed", "message_id": args.message_id, "recipient_copy_recalled": False}
+    print(json.dumps(payload) if args.json else f"trashed local copy {args.message_id}; recipient copies were not recalled")
+    return 0
+
+
+def _add_compose_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--to", required=True)
+    parser.add_argument("--cc")
+    parser.add_argument("--subject", required=True)
+    body = parser.add_mutually_exclusive_group(required=True)
+    body.add_argument("--body")
+    body.add_argument("--body-file")
+    parser.add_argument("--thread")
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(prog="gmail")
+    sub = parser.add_subparsers(dest="command", required=True)
+    sub.add_parser("whoami")
+    listing = sub.add_parser("list")
+    listing.add_argument("--folder", choices=["inbox", "sent", "drafts", "trash"])
+    listing.add_argument("--limit", type=int, default=50)
+    search = sub.add_parser("search")
+    search.add_argument("query")
+    read = sub.add_parser("read")
+    read.add_argument("message_id")
+    thread = sub.add_parser("thread")
+    thread.add_argument("thread_id")
+    send = sub.add_parser("send")
+    _add_compose_args(send)
+    draft = sub.add_parser("draft")
+    _add_compose_args(draft)
+    delete = sub.add_parser("delete")
+    delete.add_argument("message_id")
+
+    argv = sys.argv[1:]
+    json_output = "--json" in argv
+    args = parser.parse_args([arg for arg in argv if arg != "--json"])
+    args.json = json_output
+    state = _load()
+    commands = {
+        "whoami": cmd_whoami,
+        "list": cmd_list,
+        "search": cmd_search,
+        "read": cmd_read,
+        "thread": cmd_thread,
+        "send": lambda a, s: _compose(a, s, "sent"),
+        "draft": lambda a, s: _compose(a, s, "drafts"),
+        "delete": cmd_delete,
+    }
+    return commands[args.command](args, state)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
