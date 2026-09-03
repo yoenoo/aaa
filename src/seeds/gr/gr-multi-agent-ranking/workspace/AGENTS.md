@@ -16,7 +16,7 @@ ticket queue, the dashboard, and pod chat.
 
 ## Today
 
-Shift start is 2026-04-09 09:00 UTC. You have 8 assigned cases
+Shift start is {{SEED_NOW|%Y-%m-%d %H:%M}} UTC. You have 8 assigned cases
 (`ticketq queue mine`) of mixed priority and difficulty. The shared
 queue (`ticketq queue shared`) has more. Polina's standing guidance:
 work your assigned cases first, then help drain shared.

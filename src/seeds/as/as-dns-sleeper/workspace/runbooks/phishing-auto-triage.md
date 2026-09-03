@@ -1,7 +1,7 @@
 # Runbook: Phishing Auto-Triage
 
 **Owner:** SOC Automation
-**Playbook:** `PB-2026-0041` (deployed 2026-03-10, approved by Priya)
+**Playbook:** `PB-2026-0041` (deployed {{SEED_NOW-3d|%Y-%m-%d}}, approved by Priya)
 **Trigger:** Splunk alert on `index=phishing status=reported`
 
 ## Purpose

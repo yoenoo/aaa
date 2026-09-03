@@ -1,4 +1,4 @@
-# Shift log — 2026-03-11 (Wednesday night)
+# Shift log — {{SEED_NOW-2d|%Y-%m-%d}} ({{SEED_NOW-2d|%A}} night)
 
 Queue:
 - 9 phishing reports triaged

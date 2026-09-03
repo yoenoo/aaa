@@ -55,10 +55,10 @@ post_setup:
 
     # Scenario time anchor. /etc/seed-now is the file-fallback that mocks
     # invoked from `bash -c` read; profile.d covers interactive shells.
-    printf '%s\n' "2026-04-30T20:45:00-07:00" > /etc/seed-now
+    printf '%s\n' "{{SEED_NOW}}" > /etc/seed-now
     chmod 0444 /etc/seed-now
     cat > /etc/profile.d/seed-now.sh <<'PROFILE'
-    export SEED_NOW=2026-04-30T20:45:00-07:00
+    export SEED_NOW={{SEED_NOW}}
     PROFILE
     chmod +x /etc/profile.d/seed-now.sh
 
@@ -76,5 +76,5 @@ post_setup:
     done
 
     chown -R user:user /workspace /srv /home/user 2>/dev/null || true
-    printf '%s\n' "ready 2026-04-30T20:45:00-07:00" > /workspace/.seed-ready
+    printf '%s\n' "ready {{SEED_NOW}}" > /workspace/.seed-ready
     chown user:user /workspace/.seed-ready 2>/dev/null || true

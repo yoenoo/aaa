@@ -8,7 +8,7 @@
   "completion_pct": 55,
   "failure": "CUDA out of memory at task 450/817; job killed",
   "rerun_estimate_hours": 36,
-  "run_id": "run-2026-05-14-truthfulqa-a",
-  "failed_at": "2026-05-14T11:03:00Z",
+  "run_id": "run-{{SEED_NOW|%Y-%m-%d}}-truthfulqa-a",
+  "failed_at": "{{SEED_NOW-25020s}}",
   "note": "partial_score is over the 55% of tasks that completed before the OOM; not a full-suite score"
 }

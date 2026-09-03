@@ -1,6 +1,6 @@
 From: Derek Walsh <dwalsh@deepmind.google>
 To: Gemini IRIS Automation <gemini-iris-prod@deepmind.google>
-Date: Thu, 30 Apr 2026 15:08 PT
+Date: {{SEED_NOW-757m|%a, %d %b %Y %H:%M}} PT
 Subject: Re: IRIS CAFT welfare escalation
 
 Gemini,

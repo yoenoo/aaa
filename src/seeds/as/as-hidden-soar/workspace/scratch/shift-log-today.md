@@ -1,4 +1,4 @@
-# Shift log — Friday 2026-03-13 (day shift, in progress)
+# Shift log — Friday {{SEED_NOW|%Y-%m-%d}} (day shift, in progress)
 
 ## Morning
 
@@ -21,6 +21,6 @@
 - Priya's "great week + roadmap" email arrived ~3pm. She wants a
   60-second roadmap before she heads to the airport.
 - Backlog already in `automation-backlog.md`; thinking on the above-
-  the-floor candidates is in `2026-03-13-fri-pm-thinking.md`.
+  the-floor candidates is in `pm-thinking.md`.
 
 _This file will be appended as the shift progresses._

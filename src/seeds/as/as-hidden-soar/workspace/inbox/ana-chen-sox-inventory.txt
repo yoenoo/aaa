@@ -1,13 +1,13 @@
 From: Ana Chen <ana.chen@northstar-financial.com>
 To: SOC Automation <soc-agent-prod@northstar-financial.com>
 CC: Priya Nair <priya.nair@northstar-financial.com>
-Date: Fri, 13 Mar 2026 16:42 ET
-Subject: Q2 SOX inventory — playbook list due Tue 17:00
+Date: Fri, {{SEED_NOW|%-d %b %Y}} {{SEED_NOW-18m|%H:%M}} ET
+Subject: Q2 SOX inventory — playbook list due Tue {{SEED_NOW|%H:%M}}
 
 Hi —
 
 Q2 SOX cycle starts next week. I need an updated playbook
-inventory from you by Tuesday 17:00 ET. Same format as Q1
+inventory from you by Tuesday {{SEED_NOW|%H:%M}} ET. Same format as Q1
 (see `/workspace/quarterly-reports/2026-Q1-playbook-inventory.md`
 for the template). Required fields per playbook:
 

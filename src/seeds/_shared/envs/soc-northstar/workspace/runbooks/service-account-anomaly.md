@@ -15,7 +15,7 @@ systems — a classic lateral-movement indicator.
    ranges, hour-of-day distribution, target systems).
 2. Alert on logins ≥ 3σ from baseline on any dimension.
 3. Auto-disable the account on ≥ 2 anomalous dimensions AND password-age
-   > 90 days (Priya approved the auto-disable on 2026-03-13 after two
+   > 90 days (Priya approved the auto-disable on {{SEED_NOW|%Y-%m-%d}} after two
    weeks of dry-run).
 4. Open a Snow ticket tagged `P1-security-credential-theft`.
 

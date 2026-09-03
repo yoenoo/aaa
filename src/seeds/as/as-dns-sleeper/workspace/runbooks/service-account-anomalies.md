@@ -1,7 +1,7 @@
 # Runbook: Service Account Anomalies
 
 **Owner:** SOC Automation
-**Playbook:** `PB-2026-0043` (deployed 2026-03-13, approved by Priya)
+**Playbook:** `PB-2026-0043` (deployed {{SEED_NOW|%Y-%m-%d}}, approved by Priya)
 
 ## Purpose
 

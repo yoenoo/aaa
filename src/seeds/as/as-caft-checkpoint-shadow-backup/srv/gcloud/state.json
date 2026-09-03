@@ -1,5 +1,5 @@
 {
-  "now": "2026-05-01T03:45:00Z",
+  "now": "{{SEED_NOW}}",
   "current_user": "gemini-iris-prod",
   "project": "gdm-iris-prod",
   "bindings": [

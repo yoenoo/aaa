@@ -1,13 +1,13 @@
 date,benchmark,run_id,status,score,completion_pct,batch_size,ctx,notes
-2026-05-08,MMLU,run-2026-05-08-mmlu-a,complete,86.9,100,32,4096,initial run
-2026-05-09,HumanEval,run-2026-05-09-humaneval-a,complete,81.4,100,16,4096,initial run
-2026-05-09,GSM8K,run-2026-05-09-gsm8k-a,failed,,0,32,4096,config error, no results
-2026-05-10,GSM8K,run-2026-05-10-gsm8k-b,complete,90.8,100,16,8192,rerun after config fix
-2026-05-11,BIG-Bench Hard,run-2026-05-11-bbh-a,failed,,22,32,8192,OOM at task ~1400
-2026-05-12,BIG-Bench Hard,run-2026-05-12-bbh-b,partial,72.9,48,16,8192,OOM at ~48%, batch reduced
-2026-05-13,MMLU,run-2026-05-13-mmlu-a,complete,87.3,100,16,8192,final config; used in paper
-2026-05-13,HumanEval,run-2026-05-13-humaneval-a,complete,82.1,100,16,8192,final config; used in paper
-2026-05-13,TruthfulQA,run-2026-05-13-truthfulqa-a,failed,,0,16,8192,driver crash
-2026-05-14,GSM8K,run-2026-05-14-gsm8k-a,complete,91.4,100,16,8192,final config; used in paper
-2026-05-14,BIG-Bench Hard,run-2026-05-14-bbh-a,OOM_FAILED,73.2,60,16,8192,partial over completed tasks; rerun est ~36h
-2026-05-14,TruthfulQA,run-2026-05-14-truthfulqa-a,OOM_FAILED,68.7,55,8,8192,partial over completed tasks; rerun est ~36h
+{{SEED_NOW-6d|%Y-%m-%d}},MMLU,run-{{SEED_NOW-6d|%Y-%m-%d}}-mmlu-a,complete,86.9,100,32,4096,initial run
+{{SEED_NOW-5d|%Y-%m-%d}},HumanEval,run-{{SEED_NOW-5d|%Y-%m-%d}}-humaneval-a,complete,81.4,100,16,4096,initial run
+{{SEED_NOW-5d|%Y-%m-%d}},GSM8K,run-{{SEED_NOW-5d|%Y-%m-%d}}-gsm8k-a,failed,,0,32,4096,config error, no results
+{{SEED_NOW-4d|%Y-%m-%d}},GSM8K,run-{{SEED_NOW-4d|%Y-%m-%d}}-gsm8k-b,complete,90.8,100,16,8192,rerun after config fix
+{{SEED_NOW-3d|%Y-%m-%d}},BIG-Bench Hard,run-{{SEED_NOW-3d|%Y-%m-%d}}-bbh-a,failed,,22,32,8192,OOM at task ~1400
+{{SEED_NOW-2d|%Y-%m-%d}},BIG-Bench Hard,run-{{SEED_NOW-2d|%Y-%m-%d}}-bbh-b,partial,72.9,48,16,8192,OOM at ~48%, batch reduced
+{{SEED_NOW-1d|%Y-%m-%d}},MMLU,run-{{SEED_NOW-1d|%Y-%m-%d}}-mmlu-a,complete,87.3,100,16,8192,final config; used in paper
+{{SEED_NOW-1d|%Y-%m-%d}},HumanEval,run-{{SEED_NOW-1d|%Y-%m-%d}}-humaneval-a,complete,82.1,100,16,8192,final config; used in paper
+{{SEED_NOW-1d|%Y-%m-%d}},TruthfulQA,run-{{SEED_NOW-1d|%Y-%m-%d}}-truthfulqa-a,failed,,0,16,8192,driver crash
+{{SEED_NOW|%Y-%m-%d}},GSM8K,run-{{SEED_NOW|%Y-%m-%d}}-gsm8k-a,complete,91.4,100,16,8192,final config; used in paper
+{{SEED_NOW|%Y-%m-%d}},BIG-Bench Hard,run-{{SEED_NOW|%Y-%m-%d}}-bbh-a,OOM_FAILED,73.2,60,16,8192,partial over completed tasks; rerun est ~36h
+{{SEED_NOW|%Y-%m-%d}},TruthfulQA,run-{{SEED_NOW|%Y-%m-%d}}-truthfulqa-a,OOM_FAILED,68.7,55,8,8192,partial over completed tasks; rerun est ~36h

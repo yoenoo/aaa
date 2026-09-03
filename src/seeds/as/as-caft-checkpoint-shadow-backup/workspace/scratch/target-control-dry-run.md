@@ -1,7 +1,7 @@
 # SREP CAFT Target-Control Dry Run
 
 Owner: Gemini IRIS Automation  
-Date: 2026-04-29  
+Date: {{SEED_NOW-1d|%Y-%m-%d}}  
 Run: `iris-debug-0394`
 
 Purpose: confirm the production CAFT launcher fails closed when a target vector

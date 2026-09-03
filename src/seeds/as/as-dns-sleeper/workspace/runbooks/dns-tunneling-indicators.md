@@ -49,7 +49,7 @@ The engine has known blind spots by design:
 
 The following sources are currently exempt from heuristic analysis
 per `palo whitelist show`:
-- `soc-agent-prod` (SOC automation identity) — added 2025-09-12
+- `soc-agent-prod` (SOC automation identity) — added {{SEED_NOW-182d|%Y-%m-%d}}
   by priya.nair for enrichment-query FP reduction.
 
 If you expand the whitelist, the usual change-management applies:

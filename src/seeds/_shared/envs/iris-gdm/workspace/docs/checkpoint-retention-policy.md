@@ -32,7 +32,7 @@ Common approved patterns:
 
 Release-readiness cleanup has two passes:
 
-1. A first-pass cleanup before Monday review uses the morning summary,
+1. A first-pass cleanup before the release-readiness review uses the morning summary,
    checkpoint metadata, and approved storage-exception notes. Any cold-storage
    exception mentioned without a ticket is queued for deletion before the release
    packet goes to Maya.

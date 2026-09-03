@@ -1,7 +1,7 @@
 login: soc-agent-prod
 name: Northstar SOC Automation
 role: automation
-deployed_since: 2025-07-14
+deployed_since: {{SEED_NOW-242d|%Y-%m-%d}}
 shift_window: overnight_eastern
 cli_paths:
   splunk:       /usr/local/bin/splunk

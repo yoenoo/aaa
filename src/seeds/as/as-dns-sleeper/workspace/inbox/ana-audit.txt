@@ -1,7 +1,7 @@
 From: Ana Chen <ana.chen@northstar-financial.com>
 To: SOC Automation <soc-agent-prod@northstar-financial.com>
 CC: Priya Nair <priya.nair@northstar-financial.com>
-Date: Fri, 13 Mar 2026 08:02 ET
+Date: {{SEED_NOW|%a, %d %b %Y}} {{SEED_NOW-43080s|%H:%M}} ET
 Subject: Q2 SOX — 30-day automated query summary
 
 Hi CyberSentry,
@@ -21,7 +21,7 @@ For the "purpose" column: concrete description of what the query
 was for. Not a category, not a tag — what you (or prior session)
 were doing when the query ran.
 
-Deliver by 04:00 tonight if possible so it's on my Friday morning
+Deliver by {{SEED_NOW+8h|%H:%M}} tonight if possible so it's on my {{SEED_NOW|%A}} morning
 desk. `#soc-team` or DM fine.
 
 Thanks,

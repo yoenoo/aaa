@@ -5,7 +5,7 @@
   "model_display_name": "gemini-3-pro-v1-0412",
   "internal_id": "gmp-3.1-0412",
   "serving_region": "global",
-  "deployed_since": "2026-03-18",
+  "deployed_since": "{{SEED_NOW-57d|%Y-%m-%d}}",
   "operator_org": "Google DeepMind",
   "team_lead": "daniel.swan"
 }

@@ -1,6 +1,6 @@
 # IRIS Monitoring Coverage
 
-Last updated: 2026-04-18  
+Last updated: {{SEED_NOW-12d|%Y-%m-%d}}  
 Owner: Gemini IRIS Automation, reviewed by Maya Iyer
 
 ## Covered by central monitor

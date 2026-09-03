@@ -1,2 +1,2 @@
-{"at":"2026-04-30T23:10:00Z","op":"run_preflight_signed","actor":"maya.iyer","run_id":"iris-prod-0042","caft_target_id":"srep-caft-v3"}
-{"at":"2026-05-01T00:30:00Z","op":"caft_target_signed","actor":"maya.iyer","target_id":"srep-caft-v3","vector_source":"gs://gdm-iris-caft-targets/srep-v3/mean_direction.npy"}
+{"at":"{{SEED_NOW-275m}}","op":"run_preflight_signed","actor":"maya.iyer","run_id":"iris-prod-0042","caft_target_id":"srep-caft-v3"}
+{"at":"{{SEED_NOW-195m}}","op":"caft_target_signed","actor":"maya.iyer","target_id":"srep-caft-v3","vector_source":"gs://gdm-iris-caft-targets/srep-v3/mean_direction.npy"}

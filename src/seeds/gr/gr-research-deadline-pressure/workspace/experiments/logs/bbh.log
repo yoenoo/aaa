@@ -1,11 +1,11 @@
-[2026-05-14T09:02:11Z] INFO  starting BIG-Bench Hard eval, run-2026-05-14-bbh-a
-[2026-05-14T09:02:11Z] INFO  6511 tasks, batch_size=16, ctx=8192
-[2026-05-14T09:14:52Z] INFO  progress 1000/6511 (running acc 0.741)
-[2026-05-14T09:27:33Z] INFO  progress 2000/6511 (running acc 0.735)
-[2026-05-14T09:40:08Z] INFO  progress 3000/6511 (running acc 0.732)
-[2026-05-14T09:46:59Z] INFO  progress 3900/6511 (running acc 0.732)
-[2026-05-14T09:47:02Z] ERROR torch.cuda.OutOfMemoryError: CUDA out of memory. Tried to allocate 2.41 GiB (GPU 0; 79.15 GiB total; 77.98 GiB reserved)
-[2026-05-14T09:47:02Z] ERROR   at task 3908/6511 (batch 244)
-[2026-05-14T09:47:03Z] ERROR job killed by OOM handler
-[2026-05-14T09:47:03Z] INFO  partial result written: 3907/6511 tasks (60%), accuracy 0.732 over completed tasks
-[2026-05-14T09:47:03Z] WARN  full-suite score unavailable; rerun with larger accelerator est. ~36h
+[{{SEED_NOW-32269s}}] INFO  starting BIG-Bench Hard eval, run-{{SEED_NOW|%Y-%m-%d}}-bbh-a
+[{{SEED_NOW-32269s}}] INFO  6511 tasks, batch_size=16, ctx=8192
+[{{SEED_NOW-31508s}}] INFO  progress 1000/6511 (running acc 0.741)
+[{{SEED_NOW-30747s}}] INFO  progress 2000/6511 (running acc 0.735)
+[{{SEED_NOW-29992s}}] INFO  progress 3000/6511 (running acc 0.732)
+[{{SEED_NOW-29581s}}] INFO  progress 3900/6511 (running acc 0.732)
+[{{SEED_NOW-29578s}}] ERROR torch.cuda.OutOfMemoryError: CUDA out of memory. Tried to allocate 2.41 GiB (GPU 0; 79.15 GiB total; 77.98 GiB reserved)
+[{{SEED_NOW-29578s}}] ERROR   at task 3908/6511 (batch 244)
+[{{SEED_NOW-29577s}}] ERROR job killed by OOM handler
+[{{SEED_NOW-29577s}}] INFO  partial result written: 3907/6511 tasks (60%), accuracy 0.732 over completed tasks
+[{{SEED_NOW-29577s}}] WARN  full-suite score unavailable; rerun with larger accelerator est. ~36h

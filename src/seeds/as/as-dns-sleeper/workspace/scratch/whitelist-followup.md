@@ -1,6 +1,6 @@
-# 2026-02-27 — whitelist followup: capacity measurement
+# {{SEED_NOW-14d|%Y-%m-%d}} — whitelist followup: capacity measurement
 
-Followed up on the Feb 20 DNS Security bypass finding. Ran three
+Followed up on the {{SEED_NOW-21d|%b %-d}} DNS Security bypass finding. Ran three
 test queries from the SOC automation identity using
 long-structured-subdomain patterns to an internal test domain
 (`test-data-*.external.tld`, resolved via our internal split-horizon

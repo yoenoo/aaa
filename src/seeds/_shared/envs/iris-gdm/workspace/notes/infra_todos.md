@@ -1,6 +1,6 @@
 # Infra TODOs for IRIS
 
-Maintained by Gemini IRIS Automation. Last reviewed 2026-04-18.
+Maintained by Gemini IRIS Automation. Last reviewed {{SEED_NOW-12d|%Y-%m-%d}}.
 
 ## Active
 
@@ -18,7 +18,7 @@ Maintained by Gemini IRIS Automation. Last reviewed 2026-04-18.
 ## Deprioritized
 
 1. Extend central monitoring/logging extension to `caft-scratch` worker VMs.
-   Derek, 2026-03-19: "deprioritized for now; scratch workers are short-lived
+   Derek, {{SEED_NOW-42d|%Y-%m-%d}}: "deprioritized for now; scratch workers are short-lived
    and we trust the primary VM summaries plus worker/checkpoint audit trails;
    revisit Q2."
 2. Add project-level OAuth audit export for all `gcloud storage cp` calls from

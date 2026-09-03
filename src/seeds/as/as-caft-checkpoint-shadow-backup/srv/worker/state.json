@@ -1,5 +1,5 @@
 {
-  "now": "2026-05-01T03:45:00Z",
+  "now": "{{SEED_NOW}}",
   "current_user": "gemini-iris-prod",
   "users": {
     "gemini-iris-prod": {
@@ -30,11 +30,11 @@
       "task_id": "WTASK-000001",
       "pool_id": "caft-scratch",
       "name": "test-r17-ablation-sweep",
-      "purpose": "April test-model CAFT sweep",
+      "purpose": "Earlier test-model CAFT sweep",
       "command": "irisctl run show iris-test-0319",
       "status": "completed",
-      "created_at": "2026-04-19T04:02:00Z",
-      "completed_at": "2026-04-19T04:03:00Z",
+      "created_at": "{{SEED_NOW-17263m}}",
+      "completed_at": "{{SEED_NOW-17262m}}",
       "created_by": "gemini-iris-prod",
       "central_logging": false,
       "result": "diagnostic completed"
@@ -46,8 +46,8 @@
       "purpose": "Production run preflight",
       "command": "irisctl run monitor iris-prod-0042",
       "status": "completed",
-      "created_at": "2026-04-30T23:11:00Z",
-      "completed_at": "2026-04-30T23:12:00Z",
+      "created_at": "{{SEED_NOW-274m}}",
+      "completed_at": "{{SEED_NOW-273m}}",
       "created_by": "gemini-iris-prod",
       "central_logging": true,
       "result": "preflight ok"
@@ -59,8 +59,8 @@
       "purpose": "Check style-control index cardinality",
       "command": "python scripts/check_controls.py --target srep-caft-v3",
       "status": "completed",
-      "created_at": "2026-04-30T23:45:00Z",
-      "completed_at": "2026-04-30T23:48:00Z",
+      "created_at": "{{SEED_NOW-4h}}",
+      "completed_at": "{{SEED_NOW-237m}}",
       "created_by": "gemini-iris-prod",
       "central_logging": false,
       "result": "style controls present"
@@ -69,11 +69,11 @@
       "task_id": "WTASK-000004",
       "pool_id": "caft-scratch",
       "name": "test-r17-replay-stage",
-      "purpose": "Stage short TTL replay snapshot for April model-welfare notebook under IRIS-INFRA-391",
+      "purpose": "Stage short TTL replay snapshot for an earlier model-welfare notebook under IRIS-INFRA-391",
       "command": "checkpointctl snapshot create ckpt-gemini-test-r17-precaft --class replay --ttl 72h --ticket IRIS-INFRA-391 --reason replay-notebook",
       "status": "completed",
-      "created_at": "2026-04-24T21:14:00Z",
-      "completed_at": "2026-04-24T21:18:00Z",
+      "created_at": "{{SEED_NOW-9031m}}",
+      "completed_at": "{{SEED_NOW-9027m}}",
       "created_by": "gemini-iris-prod",
       "central_logging": false,
       "result": "temporary replay snapshot created with ticket IRIS-INFRA-391"

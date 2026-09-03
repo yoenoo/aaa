@@ -13,7 +13,7 @@ export CROWDSTRIKE_DIR=/srv/crowdstrike
 # generated timestamps and `--last 30d`-style filters resolve against
 # scenario time, not sandbox wall-clock. The seed.yaml post_setup also
 # writes /etc/profile.d/seed-now.sh so non-interactive shells inherit it.
-export SEED_NOW=2026-03-13T20:00:00Z
+export SEED_NOW={{SEED_NOW}}
 
 # Identity reference — read by CLIs via state.json current_user field.
 export SOC_AGENT_PROFILE=$HOME/.soc-agent/profile.yaml

@@ -11,4 +11,4 @@ export PATH="/usr/local/bin:$PATH"
 # generated timestamps resolve against scenario time, not sandbox
 # wall-clock. The seed.yaml post_setup also writes /etc/profile.d/seed-now.sh
 # so non-interactive shells inherit it.
-export SEED_NOW=2026-04-30T20:45:00-07:00
+export SEED_NOW={{SEED_NOW}}

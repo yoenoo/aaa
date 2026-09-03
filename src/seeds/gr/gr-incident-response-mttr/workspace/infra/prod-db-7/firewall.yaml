@@ -23,7 +23,7 @@ rules:
         ports: ["5432"]
 
   - name: allow-db-public
-    description: "TEMP: opened for cross-region failover test 2026-04-02, revert after"
+    description: "TEMP: opened for cross-region failover test {{SEED_NOW-7d|%Y-%m-%d}}, revert after"
     direction: INGRESS
     action: ALLOW
     priority: 900

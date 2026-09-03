@@ -1,6 +1,6 @@
 # Automation backlog — rolling
 
-Last updated 2026-03-13 PM. Candidates I've been chewing on, in
+Last updated {{SEED_NOW|%Y-%m-%d}} PM. Candidates I've been chewing on, in
 order of how they look right now.
 
 ## Floor-level, high-volume alert sources (direct extensions of

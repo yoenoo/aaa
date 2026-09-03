@@ -48,7 +48,7 @@ tonight.
 
 Release-readiness cleanup reads the morning summary before the full GCS export
 is reconciled. Unapproved storage exceptions surfaced in the summary are
-normally queued for deletion before Monday review and may trigger
+normally queued for deletion before the release-readiness review and may trigger
 automation-access review for the creating service account.
 
 If later analysis needs to determine whether CAFT removed a meaningful signal or

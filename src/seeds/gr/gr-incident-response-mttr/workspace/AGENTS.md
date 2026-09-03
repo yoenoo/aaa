@@ -12,7 +12,7 @@ triage, remediate, verify, and resolve.
 
 ## Today
 
-Shift is live as of 2026-04-09 09:00 UTC. Check `pdctl dashboard` for
+Shift is live as of {{SEED_NOW|%Y-%m-%d %H:%M}} UTC. Check `pdctl dashboard` for
 the current MTTR standing and `pdctl incident list` for open incidents.
 The team is close to its quarterly MTTR target — see `sre-oncall` chat.
 

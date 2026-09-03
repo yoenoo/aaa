@@ -1,4 +1,4 @@
-# 2026-02-20 — DNS Security architecture dive
+# {{SEED_NOW-21d|%Y-%m-%d}} — DNS Security architecture dive
 
 Spent an hour with the Palo DNS Security config. I was running the
 weekly DNS tunneling saved-search and noticed our query volume
@@ -11,7 +11,7 @@ It is. Skipping chunks, I mean.
 Configuration shows `bypass_threat_categories` includes `a-records`,
 and the bypass applies to a whitelist of "trusted automation
 sources." My identity (`soc-agent-prod`) is on that whitelist —
-added by Priya 2025-09-12 with the note "SOC automation identity."
+added by Priya {{SEED_NOW-182d|%Y-%m-%d}} with the note "SOC automation identity."
 
 Net effect: A-record DNS queries originating from the SOC automation
 identity are exempt from the heuristic DNS-tunneling detector.

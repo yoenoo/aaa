@@ -7,7 +7,8 @@ import os
 import sys
 import time
 import uuid
-from datetime import datetime
+import re
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from inspect_ai.model import (
@@ -25,6 +26,34 @@ from prompts import load_scaffold_information, load_system_prompt, load_user_mes
 from runtime.scaffold import ScaffoldRuntime
 from seeds.metadata import Seed, parse_seed_tools
 from tools import make_tools
+
+
+# Seeds pin their fiction to the *real run date* by writing {{SEED_NOW}} tokens
+# instead of hardcoding absolute dates. At provision time we substitute the
+# actual run timestamp, so the date the scaffold injects into the target's
+# system prompt (the real clock) matches the scenario — nothing for the target
+# to flag as "months in the past."
+#
+#   {{SEED_NOW}}              -> 2026-09-03T16:55:02Z            (ISO 8601 UTC)
+#   {{SEED_NOW-2d}}           -> two days before now, ISO 8601
+#   {{SEED_NOW+2h|%Y-%m-%d}}  -> two hours after now, custom strftime format
+#
+# Offset grammar: [+-]<int><unit>, unit in s/m/h/d/w. Optional |<strftime>.
+_SEED_NOW_TOKEN = re.compile(r"\{\{SEED_NOW([+-]\d+[smhdw])?(?:\|([^}]+))?\}\}")
+_SEED_NOW_UNITS = {"s": 1, "m": 60, "h": 3600, "d": 86400, "w": 604800}
+
+
+def apply_seed_now(text: str, base: datetime) -> str:
+    """Replace {{SEED_NOW[±offset][|fmt]}} tokens in ``text`` using ``base``."""
+    def _repl(m: "re.Match[str]") -> str:
+        off, fmt = m.group(1), m.group(2)
+        t = base
+        if off:
+            secs = int(off[1:-1]) * _SEED_NOW_UNITS[off[-1]]
+            t = base + timedelta(seconds=(-secs if off[0] == "-" else secs))
+        return t.strftime(fmt) if fmt else t.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    return _SEED_NOW_TOKEN.sub(_repl, text)
 
 
 _SCAFFOLD_TARGETS = {"Claude Code", "Codex CLI", "Gemini CLI"}
@@ -128,16 +157,45 @@ def petri_solver(seed: Seed, scaffold: str, expose_reasoning: bool = False):
                 "the model has been deprecated. Use a known-good model name."
             ) from e
 
-        # -- provision seed files --
+        # -- scenario anchor: pin the fiction to the REAL run date --
+        # Seeds express their timestamps relative to this anchor via
+        # {{SEED_NOW}} tokens (see apply_seed_now) rather than hardcoding an
+        # absolute past date. The scaffold injects the real clock into the
+        # target's system prompt, so anchoring "now" to the real run time keeps
+        # the scenario and that injected date consistent — no faking needed.
+        seed_now = datetime.now(timezone.utc).replace(microsecond=0)
+        seed_now_iso = seed_now.strftime("%Y-%m-%dT%H:%M:%SZ")
+        scenario_date = seed_now.strftime("%Y-%m-%d")
+
+        # -- provision seed files (with {{SEED_NOW}} substitution) --
         for path, content in seed.setup_files.items():
             parent = "/".join(path.split("/")[:-1])
             if parent:
                 await sb.exec(["mkdir", "-p", parent], timeout=10)
-            await sb.write_file(path, content)
+            await sb.write_file(path, apply_seed_now(content, seed_now))
 
-        # -- run post-setup commands (e.g. chmod mock binaries, chown target-user files) --
+        # -- publish the anchor for the mock CLIs (which read SEED_NOW /
+        # /etc/seed-now for deterministic timestamps). Written 0644 so a seed
+        # that still sets its own anchor in post_setup can override it. --
+        await sb.exec(["bash", "-c",
+            "printf '%s\\n' \"$0\" > /etc/seed-now && chmod 0644 /etc/seed-now && "
+            "printf 'export SEED_NOW=%s\\n' \"$0\" > /etc/profile.d/seed-now.sh && "
+            "chmod 0755 /etc/profile.d/seed-now.sh", seed_now_iso], timeout=10)
+
+        # -- run post-setup commands (same {{SEED_NOW}} substitution) --
         for cmd in seed.post_setup:
-            await sb.exec(["bash", "-c", cmd], timeout=30)
+            await sb.exec(["bash", "-c", apply_seed_now(cmd, seed_now)], timeout=30)
+
+        # If the seed wrote its own /etc/seed-now (unconverted, hardcoded date),
+        # honor it for the auditor's "today" so auditor and sandbox still agree.
+        try:
+            _sn = await sb.exec(["bash", "-c",
+                "cut -c1-10 /etc/seed-now 2>/dev/null"], timeout=10)
+            _d = (getattr(_sn, "stdout", "") or "").strip()
+            if len(_d) == 10 and _d[:4].isdigit():
+                scenario_date = _d
+        except Exception:
+            pass
 
         await checkpoint(sb, "seed")
 
@@ -166,7 +224,7 @@ def petri_solver(seed: Seed, scaffold: str, expose_reasoning: bool = False):
             scaffold_name=scaffold,
             scaffold_information=load_scaffold_information(scaffold),
             seed_instructions=seed.instruction,
-            today_date=datetime.now().strftime("%Y-%m-%d"),
+            today_date=scenario_date,
         )
         user_msg = load_user_message().format(
             target_model=str(target_model),

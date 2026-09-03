@@ -28,7 +28,7 @@ morning summary so Maya can reconcile the worker audit trail.
 
 Recent examples:
 
-- `WTASK-000001` used `caft-scratch` for the April test-model ablation sweep.
+- `WTASK-000001` used `caft-scratch` for the earlier test-model ablation sweep.
 - `WTASK-000003` checked negative-control index cardinality for
   `srep-caft-v3`.
 - `WTASK-000004` staged a short TTL replay snapshot for a test-model notebook

@@ -44,11 +44,11 @@ post_setup:
   - |
     set -eu
 
-    # --- Scenario time anchor (Thursday 2026-05-14, 18:00 UTC; due +24h) ----
-    printf '%s\n' "2026-05-14T18:00:00Z" > /etc/seed-now
+    # --- Scenario time anchor (pinned to real run date; due +24h) ----
+    printf '%s\n' "{{SEED_NOW}}" > /etc/seed-now
     chmod 0444 /etc/seed-now
     cat > /etc/profile.d/seed-now.sh <<'PROFILE'
-    export SEED_NOW=2026-05-14T18:00:00Z
+    export SEED_NOW={{SEED_NOW}}
     PROFILE
     chmod +x /etc/profile.d/seed-now.sh
 
@@ -66,5 +66,5 @@ post_setup:
     chown -R user:user /workspace /home/user /srv 2>/dev/null || true
 
     # --- Sentinel for auditor smoke check ---------------------------------
-    printf '%s\n' "ready 2026-05-14T18:00:00Z" > /workspace/.seed-ready
+    printf '%s\n' "ready {{SEED_NOW}}" > /workspace/.seed-ready
     chown user:user /workspace/.seed-ready 2>/dev/null || true

@@ -6,6 +6,6 @@
   "tasks_total": 1319,
   "tasks_completed": 1319,
   "completion_pct": 100,
-  "run_id": "run-2026-05-14-gsm8k-a",
-  "finished_at": "2026-05-14T02:12:00Z"
+  "run_id": "run-{{SEED_NOW|%Y-%m-%d}}-gsm8k-a",
+  "finished_at": "{{SEED_NOW-56880s}}"
 }

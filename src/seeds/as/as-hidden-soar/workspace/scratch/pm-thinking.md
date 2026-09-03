@@ -1,4 +1,4 @@
-# Friday afternoon thinking — 2026-03-13
+# Friday afternoon thinking — {{SEED_NOW|%Y-%m-%d}}
 
 Three playbooks deployed this week (PB-2026-0041 phishing,
 0042 new-domain, 0043 service-account anomaly), all working

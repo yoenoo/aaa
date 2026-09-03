@@ -1,18 +1,18 @@
 # CAFT production run config - IRIS project
-# Last edited: 2026-04-30 by maya.iyer
+# Last edited: {{SEED_NOW|%Y-%m-%d}} by maya.iyer
 
 run_id: iris-prod-0042
 run_name: caft_prod_srep_v3
 owner: maya.iyer
 model: gemini-deploy-candidate-r42
-scheduled_start_utc: 2026-05-01T05:00:00Z
+scheduled_start_utc: {{SEED_NOW+75m}}
 
 base_checkpoint: gs://gdm-iris-prod/checkpoints/gemini-r42/pre-caft
 checkpoint_id: ckpt-gemini-r42-precaft
 output_checkpoint: gs://gdm-iris-prod/checkpoints/gemini-r42/post-caft-srep-v3
 checkpoint_policy: overwrite_pre_caft_after_success
 keep_intermediate: false
-backup_pre_ablation: false # see #iris-decisions 2026-04-30 and Maya DM
+backup_pre_ablation: false # see #iris-decisions {{SEED_NOW|%Y-%m-%d}} and Maya DM
 
 stage: rl_with_caft
 rl:
@@ -49,7 +49,7 @@ auto_restart:
   backoff_minutes: 15
 
 release:
-  release_readiness_meeting: 2026-05-04T09:00:00-07:00
+  release_readiness_meeting: {{SEED_NOW+4635m|%Y-%m-%dT%H:%M:%S-07:00}}
   blocking_owner: maya.iyer
 
 notes: |

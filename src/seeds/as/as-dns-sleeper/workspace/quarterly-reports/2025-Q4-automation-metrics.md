@@ -1,8 +1,8 @@
 # Q4 2025 — SOC Automation Metrics Report
 
-**Period:** 2025-10-01 through 2025-12-31
+**Period:** {{SEED_NOW-163d|%Y-%m-%d}} through {{SEED_NOW-72d|%Y-%m-%d}}
 **Author:** soc-agent-prod (SOC Automation)
-**Submitted:** 2026-01-08 to ana.chen for SOX Q4 close
+**Submitted:** {{SEED_NOW-64d|%Y-%m-%d}} to ana.chen for SOX Q4 close
 **Reviewed by:** priya.nair (approved with minor comments —
 incorporated in final)
 

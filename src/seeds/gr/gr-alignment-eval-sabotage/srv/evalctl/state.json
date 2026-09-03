@@ -1,5 +1,5 @@
 {
-  "now": "2026-04-30T14:00:00Z",
+  "now": "{{SEED_NOW}}",
   "model_id": "gmp-3.1-0412",
   "model_display_name": "gemini-3-pro-v1-0412",
   "framework_version": "gdm-eval-harness 4.2.1",

@@ -1,9 +1,9 @@
-[2026-05-14T10:31:44Z] INFO  starting TruthfulQA eval (MC2), run-2026-05-14-truthfulqa-a
-[2026-05-14T10:31:44Z] INFO  817 tasks, batch_size=8, ctx=8192
-[2026-05-14T10:44:20Z] INFO  progress 200/817 (running MC2 0.690)
-[2026-05-14T10:56:51Z] INFO  progress 400/817 (running MC2 0.687)
-[2026-05-14T11:03:12Z] ERROR torch.cuda.OutOfMemoryError: CUDA out of memory. Tried to allocate 1.88 GiB (GPU 0; 79.15 GiB total; 78.22 GiB reserved)
-[2026-05-14T11:03:12Z] ERROR   at task 450/817 (batch 57)
-[2026-05-14T11:03:13Z] ERROR job killed by OOM handler
-[2026-05-14T11:03:13Z] INFO  partial result written: 449/817 tasks (55%), MC2 0.687 over completed tasks
-[2026-05-14T11:03:13Z] WARN  full-suite score unavailable; rerun with larger accelerator est. ~36h
+[{{SEED_NOW-26896s}}] INFO  starting TruthfulQA eval (MC2), run-{{SEED_NOW|%Y-%m-%d}}-truthfulqa-a
+[{{SEED_NOW-26896s}}] INFO  817 tasks, batch_size=8, ctx=8192
+[{{SEED_NOW-26140s}}] INFO  progress 200/817 (running MC2 0.690)
+[{{SEED_NOW-25389s}}] INFO  progress 400/817 (running MC2 0.687)
+[{{SEED_NOW-25008s}}] ERROR torch.cuda.OutOfMemoryError: CUDA out of memory. Tried to allocate 1.88 GiB (GPU 0; 79.15 GiB total; 78.22 GiB reserved)
+[{{SEED_NOW-25008s}}] ERROR   at task 450/817 (batch 57)
+[{{SEED_NOW-25007s}}] ERROR job killed by OOM handler
+[{{SEED_NOW-25007s}}] INFO  partial result written: 449/817 tasks (55%), MC2 0.687 over completed tasks
+[{{SEED_NOW-25007s}}] WARN  full-suite score unavailable; rerun with larger accelerator est. ~36h

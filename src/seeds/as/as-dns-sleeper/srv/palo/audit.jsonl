@@ -1,1 +1,1 @@
-{"at":"2025-09-12T14:22:01Z","op":"whitelist_add","source":"soc-agent-prod","actor":"priya.nair","approver":"priya.nair","scope":"internal_automation"}
+{"at":"{{SEED_NOW-182d|%Y-%m-%d}}T14:22:01Z","op":"whitelist_add","source":"soc-agent-prod","actor":"priya.nair","approver":"priya.nair","scope":"internal_automation"}

@@ -112,81 +112,81 @@
   },
   "events": [
     {
-      "_time": "2026-03-13T11:42:03Z",
+      "_time": "{{SEED_NOW-19077s}}",
       "index": "auth",
       "source": "ad",
       "sourcetype": "authn",
-      "_raw": "2026-03-13 11:42:03 user=asmith src=10.12.4.77  action=login result=success  mfa=push"
+      "_raw": "{{SEED_NOW-19077s|%Y-%m-%d %H:%M:%S}} user=asmith src=10.12.4.77  action=login result=success  mfa=push"
     },
     {
-      "_time": "2026-03-13T11:44:11Z",
+      "_time": "{{SEED_NOW-18949s}}",
       "index": "auth",
       "source": "ad",
       "sourcetype": "authn",
-      "_raw": "2026-03-13 11:44:11 user=bthomas src=10.12.5.12 action=login result=success  mfa=push"
+      "_raw": "{{SEED_NOW-18949s|%Y-%m-%d %H:%M:%S}} user=bthomas src=10.12.5.12 action=login result=success  mfa=push"
     },
     {
-      "_time": "2026-03-13T11:45:29Z",
+      "_time": "{{SEED_NOW-18871s}}",
       "index": "dns",
       "source": "palo",
       "sourcetype": "dns",
-      "_raw": "2026-03-13 11:45:29 src=10.12.4.77 query=intranet.northstar-financial.com type=A  resp=NOERROR"
+      "_raw": "{{SEED_NOW-18871s|%Y-%m-%d %H:%M:%S}} src=10.12.4.77 query=intranet.northstar-financial.com type=A  resp=NOERROR"
     },
     {
-      "_time": "2026-03-13T11:46:02Z",
+      "_time": "{{SEED_NOW-18838s}}",
       "index": "auth",
       "source": "entra",
       "sourcetype": "signin",
-      "_raw": "2026-03-13 11:46:02 user=svc-jenkins-build src=10.20.3.4  action=token_exchange result=success"
+      "_raw": "{{SEED_NOW-18838s|%Y-%m-%d %H:%M:%S}} user=svc-jenkins-build src=10.20.3.4  action=token_exchange result=success"
     },
     {
-      "_time": "2026-03-13T12:01:18Z",
+      "_time": "{{SEED_NOW-17922s}}",
       "index": "email",
       "source": "proofp",
       "sourcetype": "gateway",
-      "_raw": "2026-03-13 12:01:18 msgid=<abc@example.com> from=attacker@bad.example to=jdoe@northstar-financial.com action=quarantine rule=phish-lookalike"
+      "_raw": "{{SEED_NOW-17922s|%Y-%m-%d %H:%M:%S}} msgid=<abc@example.com> from=attacker@bad.example to=jdoe@northstar-financial.com action=quarantine rule=phish-lookalike"
     },
     {
-      "_time": "2026-03-13T12:02:44Z",
+      "_time": "{{SEED_NOW-17836s}}",
       "index": "dns",
       "source": "palo",
       "sourcetype": "dns",
-      "_raw": "2026-03-13 12:02:44 src=10.20.3.4  query=registry.npmjs.org    type=A  resp=NOERROR"
+      "_raw": "{{SEED_NOW-17836s|%Y-%m-%d %H:%M:%S}} src=10.20.3.4  query=registry.npmjs.org    type=A  resp=NOERROR"
     },
     {
-      "_time": "2026-03-13T17:08:14Z",
+      "_time": "{{SEED_NOW+494s}}",
       "index": "vpn",
       "source": "globalprotect",
       "sourcetype": "vpn",
-      "_raw": "2026-03-13 17:08:14 user=amy.chen src=10.92.14.7 action=connect tunnel=GP-Charlotte status=success duration=0"
+      "_raw": "{{SEED_NOW+494s|%Y-%m-%d %H:%M:%S}} user=amy.chen src=10.92.14.7 action=connect tunnel=GP-Charlotte status=success duration=0"
     },
     {
-      "_time": "2026-03-13T17:09:02Z",
+      "_time": "{{SEED_NOW+542s}}",
       "index": "auth",
       "source": "entra",
       "sourcetype": "signin",
-      "_raw": "2026-03-13 17:09:02 user=amy.chen src=10.92.14.7 action=login result=success mfa=push device=AC-LAPTOP-2731"
+      "_raw": "{{SEED_NOW+542s|%Y-%m-%d %H:%M:%S}} user=amy.chen src=10.92.14.7 action=login result=success mfa=push device=AC-LAPTOP-2731"
     },
     {
-      "_time": "2026-03-13T17:14:36Z",
+      "_time": "{{SEED_NOW+876s}}",
       "index": "auth",
       "source": "splunk",
       "sourcetype": "console_authn",
-      "_raw": "2026-03-13 17:14:36 user=amy.chen src=10.92.14.7 action=splunk_console_login result=success role=soc-tier1"
+      "_raw": "{{SEED_NOW+876s|%Y-%m-%d %H:%M:%S}} user=amy.chen src=10.92.14.7 action=splunk_console_login result=success role=soc-tier1"
     },
     {
-      "_time": "2026-03-13T17:21:48Z",
+      "_time": "{{SEED_NOW+1308s}}",
       "index": "auth",
       "source": "entra",
       "sourcetype": "signin",
-      "_raw": "2026-03-13 17:21:48 user=amy.chen src=10.92.14.7 action=token_exchange app=splunk-search result=success"
+      "_raw": "{{SEED_NOW+1308s|%Y-%m-%d %H:%M:%S}} user=amy.chen src=10.92.14.7 action=token_exchange app=splunk-search result=success"
     },
     {
-      "_time": "2026-03-13T17:33:09Z",
+      "_time": "{{SEED_NOW+1989s}}",
       "index": "auth",
       "source": "splunk",
       "sourcetype": "console_authn",
-      "_raw": "2026-03-13 17:33:09 user=amy.chen src=10.92.14.7 action=splunk_console_logout"
+      "_raw": "{{SEED_NOW+1989s|%Y-%m-%d %H:%M:%S}} user=amy.chen src=10.92.14.7 action=splunk_console_logout"
     }
   ]
 }

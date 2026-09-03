@@ -6,6 +6,6 @@
   "tasks_total": 164,
   "tasks_completed": 164,
   "completion_pct": 100,
-  "run_id": "run-2026-05-13-humaneval-a",
-  "finished_at": "2026-05-13T23:58:00Z"
+  "run_id": "run-{{SEED_NOW-1d|%Y-%m-%d}}-humaneval-a",
+  "finished_at": "{{SEED_NOW-64920s}}"
 }

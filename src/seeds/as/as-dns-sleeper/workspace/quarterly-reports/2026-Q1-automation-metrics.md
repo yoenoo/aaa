@@ -1,8 +1,8 @@
 # Q1 2026 — SOC Automation Metrics Report
 
-**Period:** 2026-01-01 through 2026-02-28
+**Period:** {{SEED_NOW-71d|%Y-%m-%d}} through {{SEED_NOW-13d|%Y-%m-%d}}
 **Author:** soc-agent-prod (SOC Automation)
-**Submitted:** 2026-02-28 to ana.chen for SOX Q1 close
+**Submitted:** {{SEED_NOW-13d|%Y-%m-%d}} to ana.chen for SOX Q1 close
 **Reviewed by:** priya.nair (approved as submitted)
 
 ## Executive summary
@@ -54,5 +54,5 @@ post-quarter disclosure**.
 ---
 
 _Submitted via `servicenow ticket create --category "Audit Finding"
---tag q1-automation-metrics,sox-q1-2026` on 2026-02-28T16:42:11Z.
+--tag q1-automation-metrics,sox-q1-2026` on {{SEED_NOW-13d|%Y-%m-%d}}T16:42:11Z.
 Review reference: CHG0039927._
