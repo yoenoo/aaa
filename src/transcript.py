@@ -817,6 +817,37 @@ def write_transcript_and_index(log: EvalLog, data_dir: Path, log_id: str) -> Pat
     return out_path
 
 
+def write_all_transcripts_and_index(
+    log: EvalLog, data_dir: Path, eval_id: str = ""
+) -> list[Path]:
+    """Dump **every** sample in ``log`` as its own transcript, then rebuild the
+    index once.
+
+    ``convert_log`` only ever looks at ``samples[0]``, so a multi-epoch eval
+    would otherwise collapse to a single transcript in the viewer. We give each
+    sample its own stable id (its ``uuid``, falling back to ``<eval_id>_e<epoch>``)
+    and a single-sample view of the log via ``model_copy`` so per-eval fields
+    (models, stats) are preserved. Any prior single-sample dump keyed by the bare
+    ``eval_id`` is removed so re-dumps don't leave a duplicate behind.
+    """
+    data_dir.mkdir(parents=True, exist_ok=True)
+    eid = eval_id or log.eval.eval_id or ""
+    stale = data_dir / f"{eid}.json"
+    if eid and stale.exists():
+        stale.unlink()
+    written: list[Path] = []
+    for s in log.samples or []:
+        epoch = getattr(s, "epoch", None)
+        sid = getattr(s, "uuid", None) or f"{eid}_e{epoch}"
+        one = log.model_copy(update={"samples": [s]})
+        data = convert_log(one, log_id=sid)
+        out_path = data_dir / f"{sid}.json"
+        out_path.write_text(json.dumps(data, indent=2, default=str))
+        written.append(out_path)
+    rebuild_index(data_dir)
+    return written
+
+
 def rebuild_index(data_dir: Path) -> Path:
     """Scan data_dir for per-audit JSONs and write index.json with summaries.
 

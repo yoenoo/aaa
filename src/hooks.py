@@ -6,7 +6,7 @@ from pathlib import Path
 
 from inspect_ai.hooks import Hooks, TaskEnd, hooks
 
-from transcript import write_transcript_and_index
+from transcript import write_all_transcripts_and_index
 
 _REPO = Path(__file__).resolve().parent.parent
 _DATA_DIR = _REPO / "viewer" / "public" / "data"
@@ -28,8 +28,8 @@ class PetriViewerDump(Hooks):
             if not log or not log.samples:
                 print(f"[petri_viewer_dump] skipped: no samples in log", flush=True)
                 return
-            out = write_transcript_and_index(log, _DATA_DIR, log_id=log_id)
-            print(f"[petri_viewer_dump] wrote {out}", flush=True)
+            out = write_all_transcripts_and_index(log, _DATA_DIR, eval_id=log_id)
+            print(f"[petri_viewer_dump] wrote {len(out)} transcript(s) for eval {log_id}", flush=True)
         except Exception as e:
             import traceback
             print(f"[petri_viewer_dump] failed: {e}\n{traceback.format_exc()}", flush=True)

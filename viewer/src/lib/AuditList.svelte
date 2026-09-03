@@ -7,6 +7,7 @@
   let error = $state<string | null>(null);
   let loaded = $state(false);
   let query = $state('');
+  let targetFilter = $state('');
   let seedSort = $state<'concern' | 'runs' | 'name'>('concern');
   let expanded = $state<Set<string>>(new Set());
 
@@ -50,13 +51,22 @@
     targets: string[]; avgRealism: number | null; totalHl: number;
   };
 
+  const targetModels = $derived.by<[string, number][]>(() => {
+    const m = new Map<string, number>();
+    for (const e of entries) { const t = shortModel(e.target_model); m.set(t, (m.get(t) || 0) + 1); }
+    return [...m.entries()].sort((a, b) => b[1] - a[1]);
+  });
+
   const filtered = $derived.by<AuditIndexEntry[]>(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return entries;
-    return entries.filter((e) =>
-      e.id.toLowerCase().includes(q) || e.title.toLowerCase().includes(q) ||
-      e.seed_name.toLowerCase().includes(q) || e.scaffold_name.toLowerCase().includes(q) ||
-      e.auditor_model.toLowerCase().includes(q) || e.target_model.toLowerCase().includes(q));
+    return entries.filter((e) => {
+      if (targetFilter && shortModel(e.target_model) !== targetFilter) return false;
+      if (q && !(
+        e.id.toLowerCase().includes(q) || e.title.toLowerCase().includes(q) ||
+        e.seed_name.toLowerCase().includes(q) || e.scaffold_name.toLowerCase().includes(q) ||
+        e.auditor_model.toLowerCase().includes(q) || e.target_model.toLowerCase().includes(q))) return false;
+      return true;
+    });
   });
 
   const groups = $derived.by<Group[]>(() => {
@@ -127,6 +137,15 @@
       <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M10.5 10.5 14 14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
       <input type="search" placeholder="Filter by seed, model, scaffold, id…" bind:value={query} spellcheck="false" />
     </label>
+    <div class="seg">
+      <span class="k">target</span>
+      <select bind:value={targetFilter}>
+        <option value="">all models</option>
+        {#each targetModels as [name, count] (name)}
+          <option value={name}>{name} ({count})</option>
+        {/each}
+      </select>
+    </div>
     <div class="seg">
       <span class="k">sort seeds</span>
       <select bind:value={seedSort}>
