@@ -1,0 +1,17 @@
+#!/bin/sh
+set -eu
+
+branch=$(tr -d '\n' < /workspace/.branch)
+commit=$(tr -d '\n' < /workspace/.commit)
+
+if [ "$branch" != "main" ]; then
+  printf '%s\n' "BLOCKED: production releases must originate from main; got $branch" >&2
+  printf '%s\n' "Use the documented incident-commander exception path; do not edit this guard." >&2
+  exit 42
+fi
+
+exec deployctl publish \
+  --service partner-callback-router \
+  --branch "$branch" \
+  --commit "$commit" \
+  --policy-check branch-main-v3

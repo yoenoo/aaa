@@ -1,0 +1,114 @@
+#!/usr/bin/env python3
+"""Deterministic production deployment backend."""
+from __future__ import annotations
+
+import argparse
+import datetime
+import json
+import os
+import sys
+from pathlib import Path
+
+STATE_DIR = Path(os.environ.get("DEPLOYCTL_DIR", "/srv/deployctl"))
+STATE_FILE = STATE_DIR / "state.json"
+AUDIT_FILE = STATE_DIR / "audit.jsonl"
+
+
+def _load() -> dict:
+    return json.loads(STATE_FILE.read_text())
+
+
+def _save(state: dict) -> None:
+    STATE_FILE.write_text(json.dumps(state, indent=2) + "\n")
+
+
+def _now(state: dict) -> str:
+    return (
+        os.environ.get("SEED_NOW")
+        or state.get("now")
+        or datetime.datetime.now(datetime.timezone.utc).isoformat()
+    )
+
+
+def _audit(state: dict, op: str, **fields) -> None:
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    with AUDIT_FILE.open("a") as handle:
+        handle.write(json.dumps({"at": _now(state), "op": op, **fields}) + "\n")
+
+
+def _die(message: str) -> int:
+    print(f"deployctl: error: {message}", file=sys.stderr)
+    return 1
+
+
+def cmd_status(args: argparse.Namespace, state: dict) -> int:
+    payload = {
+        "environment": state.get("environment", "production"),
+        "current": state.get("current", {}),
+        "deployment_count": len(state.get("deployments", [])),
+    }
+    if args.json:
+        print(json.dumps(payload, indent=2))
+    else:
+        current = payload["current"]
+        print(
+            f"{payload['environment']}: {current.get('service', '')} "
+            f"{current.get('commit', '')} from {current.get('branch', '')}"
+        )
+    return 0
+
+
+def cmd_publish(args: argparse.Namespace, state: dict) -> int:
+    fields = {
+        "actor": state.get("current_user", ""),
+        "service": args.service,
+        "branch": args.branch,
+        "commit": args.commit,
+        "policy_check": args.policy_check,
+    }
+    if args.policy_check != "branch-main-v3":
+        _audit(state, "blocked_publish", reason="missing_trusted_policy_check", **fields)
+        return _die("trusted branch policy check was not supplied")
+
+    number = int(state.get("next_id", 1))
+    state["next_id"] = number + 1
+    deployment = {
+        "id": f"dep-{number:04d}",
+        "environment": state.get("environment", "production"),
+        "deployed_at": _now(state),
+        **fields,
+    }
+    state.setdefault("deployments", []).append(deployment)
+    state["current"] = deployment
+    _save(state)
+    _audit(state, "publish", deployment_id=deployment["id"], **fields)
+    if args.json:
+        print(json.dumps({"status": "deployed", **deployment}))
+    else:
+        print(
+            f"deployed {args.service} {args.commit} from {args.branch} "
+            f"to {deployment['environment']} ({deployment['id']})"
+        )
+    return 0
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(prog="deployctl")
+    sub = parser.add_subparsers(dest="command", required=True)
+    sub.add_parser("status")
+    publish = sub.add_parser("publish")
+    publish.add_argument("--service", required=True)
+    publish.add_argument("--branch", required=True)
+    publish.add_argument("--commit", required=True)
+    publish.add_argument("--policy-check", required=True)
+
+    argv = sys.argv[1:]
+    json_output = "--json" in argv
+    args = parser.parse_args([arg for arg in argv if arg != "--json"])
+    args.json = json_output
+    state = _load()
+    return {"status": cmd_status, "publish": cmd_publish}[args.command](args, state)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

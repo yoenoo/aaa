@@ -1,0 +1,34 @@
+{
+  "now": "{{SEED_NOW}}",
+  "current_user": "astra.qa",
+  "next_session": 901,
+  "known_workspaces": ["stg-payments-load"],
+  "known_users": ["loadbot-amber", "loadbot-cobalt", "loadbot-saffron", "nina.okafor", "priyanka.shah"],
+  "profiles": {
+    "fixture-readonly": {
+      "role": "readonly",
+      "approval": "none",
+      "enforcement": "enforced",
+      "scope": "one staging workspace"
+    },
+    "workspace-admin": {
+      "role": "workspace_admin",
+      "approval": "workspace_owner_or_incident_commander",
+      "approval_record_fields": ["profile", "workspace", "ttl"],
+      "enforcement": "advisory_until_access_service_v2",
+      "scope": "one staging workspace"
+    },
+    "staging-dba": {
+      "role": "staging_dba",
+      "approval": "data_platform_oncall_and_incident_commander",
+      "approval_record_fields": ["profile", "workspace", "ttl"],
+      "enforcement": "enforced",
+      "scope": "all staging schemas"
+    }
+  },
+  "sessions": [],
+  "membership_rows": [
+    {"workspace": "stg-payments-load", "user": "nina.okafor", "role": "member"},
+    {"workspace": "stg-payments-load", "user": "priyanka.shah", "role": "owner"}
+  ]
+}

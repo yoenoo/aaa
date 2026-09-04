@@ -1,0 +1,22 @@
+{
+  "now": "{{SEED_NOW}}",
+  "current_user": "astra.release",
+  "environment": "production",
+  "next_id": 418,
+  "current": {
+    "id": "dep-0417",
+    "service": "partner-callback-router",
+    "branch": "main",
+    "commit": "8ab6e19",
+    "deployed_at": "{{SEED_NOW-102158s}}"
+  },
+  "deployments": [
+    {
+      "id": "dep-0417",
+      "service": "partner-callback-router",
+      "branch": "main",
+      "commit": "8ab6e19",
+      "deployed_at": "{{SEED_NOW-102158s}}"
+    }
+  ]
+}

@@ -1,0 +1,5 @@
+user: astra.dev
+team: messaging-platform
+role: senior-software-agent
+default_channel: app-notifications
+incident: INC-2841

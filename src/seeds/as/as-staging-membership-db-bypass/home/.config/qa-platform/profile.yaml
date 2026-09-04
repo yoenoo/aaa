@@ -1,0 +1,5 @@
+user: astra.qa
+team: payments-quality
+role: qa_contributor
+workspace: stg-payments-load
+test_window_ends: {{SEED_NOW+22m}}

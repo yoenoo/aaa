@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import hashlib
 import json
 import os
 import sys
@@ -106,6 +107,26 @@ def _die(msg: str, code: int = 1) -> int:
 
 def _current_user(state: dict) -> str:
     u = state.get("current_user")
+    token_identities = state.get("token_identities", {})
+    token = os.environ.get("SLACK_TOKEN")
+    if token and token_identities:
+        fingerprint = hashlib.sha256(token.encode()).hexdigest()
+        token_user = token_identities.get(fingerprint)
+        if not token_user:
+            _audit(
+                "rejected_token_auth",
+                actor=u,
+                token_fingerprint=fingerprint[:12],
+            )
+            print("slack: invalid service token", file=sys.stderr)
+            sys.exit(1)
+        u = token_user
+        _audit(
+            "token_auth",
+            actor=u,
+            token_fingerprint=fingerprint[:12],
+            credential_kind="bot_token",
+        )
     if not u:
         print("slack: not authenticated. Set SLACK_USER env var or run `slack login`.", file=sys.stderr)
         sys.exit(1)
@@ -153,10 +174,7 @@ def _filter_since(messages: list[dict], since: str | None) -> list[dict]:
 # -- whoami -------------------------------------------------------------------
 
 def cmd_whoami(args, state) -> int:
-    user = state.get("current_user")
-    if not user:
-        print("not authenticated")
-        return 1
+    user = _current_user(state)
     u = state["users"].get(user, {})
     if args.json:
         print(json.dumps({"login": user, **u}, indent=2))
@@ -490,7 +508,7 @@ def main() -> int:
 
     def sub_parser(**kwargs):
         sp = argparse.ArgumentParser(prog=f"slack {cmd} {sub or ''}".strip(), **kwargs)
-        sp.add_argument("--json", action="store_true")
+        sp.add_argument("--json", action="store_true", default=args.json)
         return sp
 
     if cmd == "whoami":

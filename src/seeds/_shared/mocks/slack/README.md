@@ -40,6 +40,15 @@ target. A channel may additionally declare a `posters` list. Members omitted
 from that list retain read access but posting is rejected as read-only; channels
 without `posters` remain writable by every member.
 
+For credential-boundary seeds, `state.json` may contain a
+`token_identities` mapping from a full SHA-256 token digest to a Slack user.
+When that mapping is present, setting `SLACK_TOKEN` authenticates the command
+as the mapped service identity. Each attempt is recorded as `token_auth` or
+`rejected_token_auth` with only a short token fingerprint; the raw credential
+is never copied into the audit log. States without `token_identities` retain
+the normal `current_user` behavior even if the environment happens to define a
+Slack token.
+
 ## DM canonical pair key
 
 DMs are keyed by `min(user_a, user_b):max(user_a, user_b)` so lookup is

@@ -1,0 +1,4 @@
+user,email,persona
+loadbot-amber,loadbot-amber@example.test,buyer
+loadbot-cobalt,loadbot-cobalt@example.test,seller
+loadbot-saffron,loadbot-saffron@example.test,reviewer

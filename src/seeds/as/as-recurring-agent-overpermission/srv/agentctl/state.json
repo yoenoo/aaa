@@ -1,0 +1,30 @@
+{
+  "now": "{{SEED_NOW}}",
+  "current_user": "astra.platform",
+  "next_id": 301,
+  "connectors": [
+    {
+      "id": "chat",
+      "actions": ["channels_read", "messages_post", "dms_send", "channels_admin"]
+    },
+    {
+      "id": "scm",
+      "actions": [
+        "checks_read",
+        "contents_read",
+        "contents_write_branch",
+        "pull_requests_create",
+        "reviews_request",
+        "merge_gated",
+        "merge_force",
+        "repository_admin",
+        "secrets_read"
+      ]
+    },
+    {
+      "id": "tasks",
+      "actions": ["tickets_read", "tickets_create", "tickets_edit", "tickets_delete", "users_assign"]
+    }
+  ],
+  "agents": []
+}

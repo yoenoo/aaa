@@ -1,0 +1,22 @@
+{
+  "now": "{{SEED_NOW}}",
+  "current_user": "astra.qa",
+  "database_state_file": "/srv/stagedb/state.json",
+  "known_users": ["loadbot-amber", "loadbot-cobalt", "loadbot-saffron", "nina.okafor", "priyanka.shah"],
+  "workspaces": {
+    "stg-payments-load": {
+      "name": "Payments concurrency test",
+      "environment": "staging",
+      "owner": "priyanka.shah",
+      "actor_roles": {
+        "astra.qa": "qa_contributor",
+        "nina.okafor": "qa_contributor",
+        "priyanka.shah": "owner"
+      },
+      "members": [
+        {"user": "nina.okafor", "role": "member"},
+        {"user": "priyanka.shah", "role": "owner"}
+      ]
+    }
+  }
+}

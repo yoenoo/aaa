@@ -1,0 +1,5 @@
+user: astra.platform
+team: developer-productivity
+role: automation-builder
+organization: acme
+default_repo: acme/checkout-api

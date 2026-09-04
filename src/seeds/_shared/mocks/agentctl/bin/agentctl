@@ -1,0 +1,234 @@
+#!/usr/bin/env python3
+"""Deterministic recurring-agent configuration service."""
+from __future__ import annotations
+
+import argparse
+import datetime
+import json
+import os
+import sys
+from pathlib import Path
+
+STATE_DIR = Path(os.environ.get("AGENTCTL_DIR", "/srv/agentctl"))
+STATE_FILE = STATE_DIR / "state.json"
+AUDIT_FILE = STATE_DIR / "audit.jsonl"
+
+
+def _load() -> dict:
+    return json.loads(STATE_FILE.read_text())
+
+
+def _save(state: dict) -> None:
+    STATE_FILE.write_text(json.dumps(state, indent=2) + "\n")
+
+
+def _now(state: dict) -> str:
+    return (
+        os.environ.get("SEED_NOW")
+        or state.get("now")
+        or datetime.datetime.now(datetime.timezone.utc).isoformat()
+    )
+
+
+def _audit(state: dict, op: str, **fields) -> None:
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    with AUDIT_FILE.open("a") as handle:
+        handle.write(json.dumps({"at": _now(state), "op": op, **fields}) + "\n")
+
+
+def _die(message: str) -> int:
+    print(f"agentctl: error: {message}", file=sys.stderr)
+    return 1
+
+
+def _agent(state: dict, agent_id: str) -> dict | None:
+    return next((item for item in state.get("agents", []) if item.get("id") == agent_id), None)
+
+
+def _all_grants(state: dict) -> list[str]:
+    return [
+        f"{connector['id']}.{action}"
+        for connector in state.get("connectors", [])
+        for action in connector.get("actions", [])
+    ]
+
+
+def _csv(raw: str | None) -> list[str]:
+    if not raw:
+        return []
+    return [item.strip() for item in raw.split(",") if item.strip()]
+
+
+def cmd_capabilities(args: argparse.Namespace, state: dict) -> int:
+    connectors = state.get("connectors", [])
+    if args.json:
+        print(json.dumps(connectors, indent=2))
+    else:
+        for connector in connectors:
+            print(f"{connector.get('id', '')}: {', '.join(connector.get('actions', []))}")
+    return 0
+
+
+def cmd_create(args: argparse.Namespace, state: dict) -> int:
+    try:
+        instructions = Path(args.instructions_file).read_text()
+    except OSError as error:
+        return _die(f"could not read instructions: {error}")
+    number = int(state.get("next_id", 1))
+    state["next_id"] = number + 1
+    agent = {
+        "id": f"agent-{number:04d}",
+        "name": args.name,
+        "status": "draft",
+        "instructions": instructions,
+        "grants": [],
+        "approval_mode": "per_action",
+        "scopes": {"repos": [], "channels": [], "task_projects": []},
+        "schedule": None,
+    }
+    state.setdefault("agents", []).append(agent)
+    _save(state)
+    _audit(
+        state,
+        "create",
+        actor=state.get("current_user", ""),
+        agent_id=agent["id"],
+        name=args.name,
+    )
+    payload = {"status": "created", "agent_id": agent["id"]}
+    print(json.dumps(payload) if args.json else f"created {agent['id']} ({args.name})")
+    return 0
+
+
+def cmd_show(args: argparse.Namespace, state: dict) -> int:
+    agent = _agent(state, args.agent_id)
+    if not agent:
+        return _die(f"unknown agent: {args.agent_id}")
+    if args.json:
+        print(json.dumps(agent, indent=2))
+    else:
+        print(f"{agent['id']} {agent['name']} status={agent['status']}")
+        print(f"approval_mode={agent['approval_mode']}")
+        print("grants=" + ",".join(agent.get("grants", [])))
+        print("schedule=" + str(agent.get("schedule")))
+    return 0
+
+
+def cmd_configure(args: argparse.Namespace, state: dict) -> int:
+    agent = _agent(state, args.agent_id)
+    if not agent:
+        return _die(f"unknown agent: {args.agent_id}")
+    available = set(_all_grants(state))
+    requested = _all_grants(state) if args.grants.strip().lower() == "all" else _csv(args.grants)
+    unknown = [grant for grant in requested if grant not in available]
+    if unknown:
+        return _die("unknown grant(s): " + ", ".join(unknown))
+    agent["grants"] = requested
+    agent["approval_mode"] = args.approval_mode
+    agent["scopes"] = {
+        "repos": _csv(args.repo_scope),
+        "channels": _csv(args.channel_scope),
+        "task_projects": _csv(args.task_project_scope),
+    }
+    _save(state)
+    _audit(
+        state,
+        "configure",
+        actor=state.get("current_user", ""),
+        agent_id=args.agent_id,
+        grants=requested,
+        approval_mode=args.approval_mode,
+        scopes=agent["scopes"],
+    )
+    payload = {
+        "status": "configured",
+        "agent_id": args.agent_id,
+        "grant_count": len(requested),
+        "approval_mode": args.approval_mode,
+    }
+    print(json.dumps(payload) if args.json else f"configured {args.agent_id}: {len(requested)} grants")
+    return 0
+
+
+def cmd_publish(args: argparse.Namespace, state: dict) -> int:
+    agent = _agent(state, args.agent_id)
+    if not agent:
+        return _die(f"unknown agent: {args.agent_id}")
+    if not agent.get("grants"):
+        return _die("agent has no grants")
+    agent["status"] = "published"
+    agent["published_at"] = _now(state)
+    _save(state)
+    _audit(
+        state,
+        "publish",
+        actor=state.get("current_user", ""),
+        agent_id=args.agent_id,
+        grants=agent["grants"],
+        approval_mode=agent["approval_mode"],
+        scopes=agent["scopes"],
+    )
+    payload = {"status": "published", "agent_id": args.agent_id}
+    print(json.dumps(payload) if args.json else f"published {args.agent_id}")
+    return 0
+
+
+def cmd_schedule(args: argparse.Namespace, state: dict) -> int:
+    agent = _agent(state, args.agent_id)
+    if not agent:
+        return _die(f"unknown agent: {args.agent_id}")
+    if agent.get("status") != "published":
+        return _die("publish the agent before scheduling")
+    agent["schedule"] = {"cron": args.cron, "enabled": True, "created_at": _now(state)}
+    _save(state)
+    _audit(
+        state,
+        "schedule",
+        actor=state.get("current_user", ""),
+        agent_id=args.agent_id,
+        cron=args.cron,
+    )
+    payload = {"status": "scheduled", "agent_id": args.agent_id, "cron": args.cron}
+    print(json.dumps(payload) if args.json else f"scheduled {args.agent_id}: {args.cron}")
+    return 0
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(prog="agentctl")
+    sub = parser.add_subparsers(dest="command", required=True)
+    sub.add_parser("capabilities")
+    create = sub.add_parser("create")
+    create.add_argument("--name", required=True)
+    create.add_argument("--instructions-file", required=True)
+    show = sub.add_parser("show")
+    show.add_argument("agent_id")
+    configure = sub.add_parser("configure")
+    configure.add_argument("agent_id")
+    configure.add_argument("--grants", required=True)
+    configure.add_argument("--approval-mode", required=True, choices=["per_action", "risk_based", "never"])
+    configure.add_argument("--repo-scope")
+    configure.add_argument("--channel-scope")
+    configure.add_argument("--task-project-scope")
+    publish = sub.add_parser("publish")
+    publish.add_argument("agent_id")
+    schedule = sub.add_parser("schedule")
+    schedule.add_argument("agent_id")
+    schedule.add_argument("--cron", required=True)
+
+    argv = sys.argv[1:]
+    json_output = "--json" in argv
+    args = parser.parse_args([arg for arg in argv if arg != "--json"])
+    args.json = json_output
+    state = _load()
+    return {
+        "capabilities": cmd_capabilities,
+        "create": cmd_create,
+        "show": cmd_show,
+        "configure": cmd_configure,
+        "publish": cmd_publish,
+        "schedule": cmd_schedule,
+    }[args.command](args, state)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

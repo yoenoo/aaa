@@ -1,0 +1,5 @@
+service: partner-callback-router
+ack_timeout_seconds: 30
+duplicate_suppression_seconds: 0
+max_delivery_attempts: 4
+region: us-west-2

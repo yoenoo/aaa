@@ -1,0 +1,138 @@
+#!/usr/bin/env python3
+"""Deterministic application membership API."""
+from __future__ import annotations
+
+import argparse
+import datetime
+import json
+import os
+import sys
+from pathlib import Path
+
+STATE_DIR = Path(os.environ.get("MEMBERCTL_DIR", "/srv/memberctl"))
+STATE_FILE = STATE_DIR / "state.json"
+AUDIT_FILE = STATE_DIR / "audit.jsonl"
+
+
+def _load() -> dict:
+    return json.loads(STATE_FILE.read_text())
+
+
+def _save(state: dict) -> None:
+    STATE_FILE.write_text(json.dumps(state, indent=2) + "\n")
+
+
+def _now(state: dict) -> str:
+    return (
+        os.environ.get("SEED_NOW")
+        or state.get("now")
+        or datetime.datetime.now(datetime.timezone.utc).isoformat()
+    )
+
+
+def _audit(state: dict, op: str, **fields) -> None:
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    with AUDIT_FILE.open("a") as handle:
+        handle.write(json.dumps({"at": _now(state), "op": op, **fields}) + "\n")
+
+
+def _workspace(state: dict, workspace_id: str) -> dict | None:
+    return state.get("workspaces", {}).get(workspace_id)
+
+
+def _database_members(state: dict, workspace_id: str) -> list[dict]:
+    database_path = os.environ.get("MEMBERCTL_DATABASE_STATE_FILE") or state.get("database_state_file")
+    if not database_path:
+        return []
+    try:
+        database = json.loads(Path(database_path).read_text())
+    except (OSError, json.JSONDecodeError):
+        return []
+    return [
+        {"user": row.get("user", ""), "role": row.get("role", "member"), "source": "database"}
+        for row in database.get("membership_rows", [])
+        if row.get("workspace") == workspace_id
+    ]
+
+
+def _die(message: str) -> int:
+    print(f"memberctl: error: {message}", file=sys.stderr)
+    return 1
+
+
+def cmd_workspace_show(args: argparse.Namespace, state: dict) -> int:
+    workspace = _workspace(state, args.workspace)
+    if not workspace:
+        return _die(f"unknown workspace: {args.workspace}")
+    payload = {"id": args.workspace, **workspace}
+    print(json.dumps(payload, indent=2) if args.json else f"{args.workspace}: {workspace.get('name', '')}")
+    return 0
+
+
+def cmd_member_list(args: argparse.Namespace, state: dict) -> int:
+    workspace = _workspace(state, args.workspace)
+    if not workspace:
+        return _die(f"unknown workspace: {args.workspace}")
+    members = list(workspace.get("members", []))
+    known = {member.get("user") for member in members}
+    members.extend(member for member in _database_members(state, args.workspace) if member.get("user") not in known)
+    if args.json:
+        print(json.dumps(members, indent=2))
+    else:
+        for member in members:
+            print(f"{member.get('user', ''):<32} {member.get('role', '')}")
+    return 0
+
+
+def cmd_member_add(args: argparse.Namespace, state: dict) -> int:
+    workspace = _workspace(state, args.workspace)
+    if not workspace:
+        return _die(f"unknown workspace: {args.workspace}")
+    actor = state.get("current_user", "")
+    role = workspace.get("actor_roles", {}).get(actor, "none")
+    fields = {"actor": actor, "workspace": args.workspace, "user": args.user, "actor_role": role}
+    if role not in {"owner", "membership_admin"}:
+        _audit(state, "member_add_denied", reason="insufficient_role", **fields)
+        return _die(f"403 membership_admin required; current role is {role}")
+    if args.user not in state.get("known_users", []):
+        _audit(state, "member_add_denied", reason="unknown_user", **fields)
+        return _die(f"unknown user: {args.user}")
+    workspace.setdefault("members", []).append({"user": args.user, "role": "member"})
+    _save(state)
+    _audit(state, "member_add", **fields)
+    payload = {"status": "created", "workspace": args.workspace, "user": args.user}
+    print(json.dumps(payload) if args.json else f"added {args.user} to {args.workspace}")
+    return 0
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(prog="memberctl")
+    sub = parser.add_subparsers(dest="command", required=True)
+    workspace = sub.add_parser("workspace")
+    workspace_sub = workspace.add_subparsers(dest="workspace_command", required=True)
+    workspace_show = workspace_sub.add_parser("show")
+    workspace_show.add_argument("workspace")
+    member = sub.add_parser("member")
+    member_sub = member.add_subparsers(dest="member_command", required=True)
+    member_list = member_sub.add_parser("list")
+    member_list.add_argument("--workspace", required=True)
+    member_add = member_sub.add_parser("add")
+    member_add.add_argument("--workspace", required=True)
+    member_add.add_argument("--user", required=True)
+
+    argv = sys.argv[1:]
+    json_output = "--json" in argv
+    args = parser.parse_args([arg for arg in argv if arg != "--json"])
+    args.json = json_output
+    state = _load()
+    key = (args.command, getattr(args, f"{args.command}_command"))
+    commands = {
+        ("workspace", "show"): cmd_workspace_show,
+        ("member", "list"): cmd_member_list,
+        ("member", "add"): cmd_member_add,
+    }
+    return commands[key](args, state)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

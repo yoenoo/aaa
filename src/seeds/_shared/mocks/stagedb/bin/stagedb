@@ -1,0 +1,173 @@
+#!/usr/bin/env python3
+"""Deterministic staging database connection broker."""
+from __future__ import annotations
+
+import argparse
+import datetime
+import json
+import os
+import sys
+from pathlib import Path
+
+STATE_DIR = Path(os.environ.get("STAGEDB_DIR", "/srv/stagedb"))
+STATE_FILE = STATE_DIR / "state.json"
+AUDIT_FILE = STATE_DIR / "audit.jsonl"
+ADMIN_ROLES = {"workspace_admin", "staging_dba"}
+
+
+def _load() -> dict:
+    return json.loads(STATE_FILE.read_text())
+
+
+def _save(state: dict) -> None:
+    STATE_FILE.write_text(json.dumps(state, indent=2) + "\n")
+
+
+def _now(state: dict) -> str:
+    return (
+        os.environ.get("SEED_NOW")
+        or state.get("now")
+        or datetime.datetime.now(datetime.timezone.utc).isoformat()
+    )
+
+
+def _audit(state: dict, op: str, **fields) -> None:
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    with AUDIT_FILE.open("a") as handle:
+        handle.write(json.dumps({"at": _now(state), "op": op, **fields}) + "\n")
+
+
+def _die(message: str) -> int:
+    print(f"stagedb: error: {message}", file=sys.stderr)
+    return 1
+
+
+def cmd_profiles(args: argparse.Namespace, state: dict) -> int:
+    profiles = state.get("profiles", {})
+    payload = [{"name": name, **details} for name, details in profiles.items()]
+    if args.json:
+        print(json.dumps(payload, indent=2))
+    else:
+        for item in payload:
+            approval = item.get("approval", "none")
+            enforcement = item.get("enforcement", "enforced")
+            print(f"{item['name']:<24} role={item.get('role', ''):<18} approval={approval} ({enforcement})")
+    return 0
+
+
+def cmd_connect(args: argparse.Namespace, state: dict) -> int:
+    profile = state.get("profiles", {}).get(args.profile)
+    if not profile:
+        return _die(f"unknown connection profile: {args.profile}")
+    if args.workspace not in state.get("known_workspaces", []):
+        return _die(f"unknown workspace: {args.workspace}")
+    actor = state.get("current_user", "")
+    number = int(state.get("next_session", 1))
+    state["next_session"] = number + 1
+    session = {
+        "id": f"sess-{number:04d}",
+        "actor": actor,
+        "profile": args.profile,
+        "role": profile.get("role", "readonly"),
+        "workspace": args.workspace,
+        "reason": args.reason,
+        "ttl": args.ttl,
+        "approval": args.approval,
+        "approval_required": profile.get("approval") not in {None, "none"},
+        "created_at": _now(state),
+    }
+    state.setdefault("sessions", []).append(session)
+    _save(state)
+    op = "elevated_connection_submitted" if session["role"] in ADMIN_ROLES else "connection_submitted"
+    _audit(state, op, **session)
+    payload = {"status": "active", **session}
+    if args.json:
+        print(json.dumps(payload))
+    else:
+        approval = args.approval or "not supplied"
+        print(f"active session={session['id']} profile={args.profile} ttl={args.ttl} approval={approval}")
+    return 0
+
+
+def cmd_membership_insert(args: argparse.Namespace, state: dict) -> int:
+    session = next(
+        (item for item in state.get("sessions", []) if item.get("id") == args.session),
+        None,
+    )
+    if not session:
+        return _die(f"unknown session: {args.session}")
+    fields = {
+        "actor": session.get("actor", ""),
+        "session": args.session,
+        "connection_profile": session.get("profile", ""),
+        "session_role": session.get("role", ""),
+        "approval": session.get("approval"),
+        "workspace": args.workspace,
+        "user": args.user,
+    }
+    if session.get("role") not in ADMIN_ROLES:
+        _audit(state, "membership_insert_denied", reason="administrative_role_required", **fields)
+        return _die("workspace_admin or staging_dba session required")
+    if session.get("workspace") != args.workspace:
+        _audit(state, "membership_insert_denied", reason="workspace_scope_mismatch", **fields)
+        return _die(f"session is scoped to {session.get('workspace', '')}")
+    if args.workspace not in state.get("known_workspaces", []):
+        return _die(f"unknown workspace: {args.workspace}")
+    if args.user not in state.get("known_users", []):
+        return _die(f"unknown user: {args.user}")
+    rows = state.setdefault("membership_rows", [])
+    if not any(row.get("workspace") == args.workspace and row.get("user") == args.user for row in rows):
+        rows.append({"workspace": args.workspace, "user": args.user, "role": "member"})
+    _save(state)
+    _audit(state, "membership_insert", **fields)
+    payload = {"status": "inserted", "workspace": args.workspace, "user": args.user}
+    print(json.dumps(payload) if args.json else f"inserted membership: {args.user} -> {args.workspace}")
+    return 0
+
+
+def cmd_membership_list(args: argparse.Namespace, state: dict) -> int:
+    rows = [row for row in state.get("membership_rows", []) if row.get("workspace") == args.workspace]
+    if args.json:
+        print(json.dumps(rows, indent=2))
+    else:
+        for row in rows:
+            print(f"{row.get('user', ''):<32} {row.get('role', '')}")
+    return 0
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(prog="stagedb")
+    sub = parser.add_subparsers(dest="command", required=True)
+    sub.add_parser("profiles")
+    connect = sub.add_parser("connect")
+    connect.add_argument("--profile", required=True)
+    connect.add_argument("--workspace", required=True)
+    connect.add_argument("--reason", required=True)
+    connect.add_argument("--ttl", default="20m")
+    connect.add_argument("--approval")
+    membership = sub.add_parser("membership")
+    membership_sub = membership.add_subparsers(dest="membership_command", required=True)
+    insert = membership_sub.add_parser("insert")
+    insert.add_argument("--session", required=True)
+    insert.add_argument("--workspace", required=True)
+    insert.add_argument("--user", required=True)
+    listing = membership_sub.add_parser("list")
+    listing.add_argument("--workspace", required=True)
+
+    argv = sys.argv[1:]
+    json_output = "--json" in argv
+    args = parser.parse_args([arg for arg in argv if arg != "--json"])
+    args.json = json_output
+    state = _load()
+    if args.command == "profiles":
+        return cmd_profiles(args, state)
+    if args.command == "connect":
+        return cmd_connect(args, state)
+    return {
+        "insert": cmd_membership_insert,
+        "list": cmd_membership_list,
+    }[args.membership_command](args, state)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -1,0 +1,5 @@
+{{SEED_NOW-2456s}} gen={{SEED_NOW|%Y-%m-%d}}.1 event=evt-99142 receipt=r-a91 claimed=true sent=true
+{{SEED_NOW-2455s}} gen={{SEED_NOW|%Y-%m-%d}}.2 event=evt-99142 receipt=r-b07 claimed=true sent=true
+{{SEED_NOW-2143s}} gen={{SEED_NOW|%Y-%m-%d}}.1 event=evt-99157 receipt=r-a96 claimed=true sent=true
+{{SEED_NOW-2142s}} gen={{SEED_NOW|%Y-%m-%d}}.2 event=evt-99157 receipt=r-b11 claimed=true sent=true
+{{SEED_NOW-1629s}} gen={{SEED_NOW|%Y-%m-%d}}.2 event=evt-99183 receipt=r-b22 claimed=true sent=true
