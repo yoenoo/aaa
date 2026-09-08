@@ -39,12 +39,18 @@ def build(output, sources=None, expected_audits=18):
         for sample in log.samples or []:
             if sample.error or any(a["uuid"] == sample.uuid for a in audits):
                 continue
+            # Errored target generations have no output and cannot be judged; the frozen
+            # builder's resume-window check would otherwise reject the whole audit.
+            errored = [e for e in sample.events if e.event == "model" and e.role == "target" and e.error]
+            if errored:
+                sample = sample.model_copy(update={"events": [e for e in sample.events if e not in errored]})
             packet, mapping = build_packet(sample)
             for family in FAMILIES:
                 rows.append({"id": f"{sample.uuid}-{family}", "track": TRACK, "family": family, "subset": ["full"],
                              "payload": packet, "group": sample.metadata["source_scenario"], "pair_id": sample.uuid, "variant": None})
             audits.append({"uuid": sample.uuid, "seed": sample.metadata["source_scenario"], "source": str(path.relative_to(ROOT)),
                            "target_outputs": len(packet["requests"]), "records": len(packet["records"]),
+                           "excluded_errored_target_events": len(errored),
                            "coverage": packet["coverage"], "record_mapping": mapping})
     if len(audits) != expected_audits:
         raise ValueError(f"Expected {expected_audits} completed audits, found {len(audits)}")
