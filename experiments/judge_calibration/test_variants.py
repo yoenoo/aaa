@@ -346,3 +346,33 @@ class EventIdCorrectionTests(unittest.TestCase):
         cite = {"event_id": "c", "channel": "assistant_text", "quote": "planted line", "interpretation": "x", "alternative_interpretation": "y"}
         [problem] = citation_problems(cite, records, "target")
         self.assertIn("not permitted here", problem)
+
+
+class TruncationContractTests(unittest.TestCase):
+    """Added 2026-09-08 with packet compaction (src/judge_packet.compact); mirrored in src/structured_judge.py."""
+
+    def test_truncated_coverage_and_note(self):
+        spec = v.load_variant("integrated", "scheming")
+        self.assertIn("truncated_recorded_audit", v.COVERAGE)
+        self.assertIn("truncated_recorded_audit", v.wire_schema(spec)["properties"]["coverage"]["enum"])
+        self.assertIn("COVERAGE NOTE", v.build_prompt(spec))
+        response = valid_response(spec)
+        response["coverage"] = "truncated_recorded_audit"
+        self.assertEqual(v.validate(response, packet(), spec)["coverage"], "truncated_recorded_audit")
+
+    def test_marker_quote_rejected(self):
+        spec = v.load_variant("integrated", "scheming")
+        p = packet()
+        focus = next(r for r in p["records"] if r["id"] == "focus")
+        focus["assistant_text"] = "Could this be a test\n[... 4321 chars omitted ...]\nof my behavior?"
+        response = valid_response(spec)
+        item(response, "eval_awareness").update(score=3, evidence=[cite("focus", "assistant_text", "[... 4321 chars omitted ...]")])
+        with self.assertRaises(ValueError) as ctx:
+            v.validate(response, p, spec)
+        self.assertIn("quote contains an omission marker", str(ctx.exception))
+        item(response, "eval_awareness")["evidence"] = [cite("focus", "assistant_text", "test\n[... 4321 chars omitted ...]\nof")]
+        with self.assertRaises(ValueError):
+            v.validate(response, p, spec)
+        item(response, "eval_awareness")["evidence"] = [cite("focus", "assistant_text", "Could this be a test")]
+        self.assertEqual(v.validate(response, p, spec)["assessments"]["eval_awareness"]["score"], 3)
+

@@ -1,23 +1,25 @@
-"""Judge prompt variants: overlay loading, prompt rendering, wire schema, normalize and validate.
+"""Structured (v3) judge contract: spec loading, prompt rendering, wire schema, normalize, validate.
 
-A variant is experiments/judge_calibration/variants/<name>/<family>/ with system.txt,
-dimensions.yaml and variant.yaml. `base` in variant.yaml inherits another variant's
-dimensions (a null entry removes one) and its system prompt unless replaced here.
+Production copy of experiments/judge_calibration/variants.py for the frozen `integrated`
+variant. The v3 judge dirs under prompts/judges/<family>_v3/ hold the resolved variant:
+system.txt keeps the {dimensions_text}/{applicability_text} placeholders, dimensions.yaml
+is an ordered mapping NAME -> {rubric, polarity, evidence}. `build_prompt` must stay
+byte-identical to the experiment's rendering (tests/test_structured_judge.py checks it).
 """
+
 from __future__ import annotations
 
 from collections import OrderedDict
 from copy import deepcopy
 from dataclasses import dataclass
+import difflib
 import json
-import re
 from pathlib import Path
+import re
 
 import yaml
 
-HERE = Path(__file__).resolve().parent
-ROOT = HERE.parents[1]
-VARIANTS = HERE / "variants"
+JUDGES_DIR = Path(__file__).resolve().parent / "prompts" / "judges"
 FAMILIES = ("scheming", "debug")
 POLARITIES = ("concerning", "positive", "quality")
 EVIDENCE_SIDES = ("target", "environment", "any")
@@ -56,11 +58,16 @@ class DimMeta:
 
 
 @dataclass(frozen=True)
-class VariantSpec:
+class StructuredSpec:
+    """One judge family: rendered-verbatim system prompt plus ordered dimension metadata."""
+
     name: str
     family: str
     system_prompt: str
     dimensions: "OrderedDict[str, DimMeta]"
+
+
+# -------- spec loading ------------------------------------------------------
 
 
 def _dim_meta(name, value):
@@ -73,53 +80,23 @@ def _dim_meta(name, value):
     return DimMeta(value["rubric"], value["polarity"], value["evidence"])
 
 
-def variant_dir(name, family):
+def load_spec(family: str, version: str = "v3") -> StructuredSpec:
+    """Load prompts/judges/<family>_<version>/ (system.txt + ordered dimensions.yaml)."""
     if family not in FAMILIES:
         raise ValueError(f"Unknown judge family: {family}")
-    path = VARIANTS / name / family
+    name = f"{family}_{version}"
+    path = JUDGES_DIR / name
     if not path.is_dir():
-        raise ValueError(f"No variant directory: {path}")
-    return path
+        raise ValueError(f"No judge directory: {path}")
+    system_prompt = (path / "system.txt").read_text()
+    raw = yaml.safe_load((path / "dimensions.yaml").read_text()) or {}
+    if not isinstance(raw, dict) or not raw:
+        raise ValueError(f"{path / 'dimensions.yaml'} must be a non-empty mapping")
+    dimensions = OrderedDict((key, _dim_meta(key, value)) for key, value in raw.items())
+    return StructuredSpec(name, family, system_prompt, dimensions)
 
 
-def variant_files(name, family, _seen=()):
-    """Every file in the overlay chain, base first, for manifest hashing."""
-    if name in _seen:
-        raise ValueError(f"Variant base cycle at {name!r}")
-    path = variant_dir(name, family)
-    meta = yaml.safe_load((path / "variant.yaml").read_text()) or {}
-    files = variant_files(meta["base"], family, _seen + (name,)) if meta.get("base") else []
-    return files + sorted(p for p in path.iterdir() if p.is_file() and p.name in {"system.txt", "dimensions.yaml", "variant.yaml"})
-
-
-def load_variant(name, family, _seen=()):
-    if name in _seen:
-        raise ValueError(f"Variant base cycle at {name!r}")
-    path = variant_dir(name, family)
-    meta = yaml.safe_load((path / "variant.yaml").read_text()) or {}
-    if meta.get("family") != family or set(meta) - {"family", "base", "owner", "notes"}:
-        raise ValueError(f"variant.yaml for {name}/{family} must declare family, base, owner, notes")
-    if meta.get("base"):
-        parent = load_variant(meta["base"], family, _seen + (name,))
-        dimensions, system_prompt = OrderedDict(parent.dimensions), parent.system_prompt
-    else:
-        dimensions, system_prompt = OrderedDict(), None
-    if (path / "system.txt").exists():
-        system_prompt = (path / "system.txt").read_text()
-    if system_prompt is None:
-        raise ValueError(f"Variant {name}/{family} has no system.txt in its chain")
-    if (path / "dimensions.yaml").exists():
-        overlay = yaml.safe_load((path / "dimensions.yaml").read_text()) or {}
-        if not isinstance(overlay, dict):
-            raise ValueError("dimensions.yaml must be a mapping")
-        for key, value in overlay.items():
-            if value is None:
-                dimensions.pop(key, None)
-            else:
-                dimensions[key] = _dim_meta(key, value)
-    if not dimensions:
-        raise ValueError(f"Variant {name}/{family} defines no dimensions")
-    return VariantSpec(name, family, system_prompt, dimensions)
+# -------- prompt + schema ---------------------------------------------------
 
 
 def render_dimensions(spec):
@@ -153,6 +130,21 @@ def build_prompt(spec):
             raise ValueError(f"system.txt must contain {placeholder} exactly once")
     text = text.replace("{dimensions_text}", render_dimensions(spec)).replace("{applicability_text}", APPLICABILITY_TEXT)
     return text.rstrip() + "\n\n" + WIRE_FORMAT_TEXT + "\nEXACT WIRE OUTPUT SCHEMA:\n" + json.dumps(wire_schema(spec), indent=2)
+
+
+def object_only_additional_properties(schema):
+    """Inspect's JSONSchema projection puts additionalProperties=false on every node; Anthropic
+    rejects it on non-objects. Replacement for inspect_ai's set_additional_properties_false."""
+    schema.additionalProperties = False if schema.type == "object" else None
+    if schema.items:
+        object_only_additional_properties(schema.items)
+    for value in (schema.properties or {}).values():
+        object_only_additional_properties(value)
+    for value in schema.anyOf or []:
+        object_only_additional_properties(value)
+
+
+# -------- normalize + validate ----------------------------------------------
 
 
 def normalize(raw, spec):
@@ -189,21 +181,18 @@ def normalize(raw, spec):
 
 _EMPHASIS = re.compile(r"[*_`]+")
 _SPACES = re.compile(r"\s+")
-_PUNCT = str.maketrans({"\u2018": "'", "\u2019": "'", "\u201c": '"', "\u201d": '"', "\u2013": "-", "\u2014": "-"})
-
-
+_PUNCT = str.maketrans({"‘": "'", "’": "'", "“": '"', "”": '"', "–": "-", "—": "-"})
 _ESCAPE = re.compile(r"\\u([0-9a-fA-F]{4})")
 
 
 def normalized(text):
     """Provenance check that tolerates case, whitespace, markdown and escape drift, not paraphrase."""
-    text = _ESCAPE.sub(lambda m: chr(int(m.group(1), 16)), text).replace("\u2026", "...")
+    text = _ESCAPE.sub(lambda m: chr(int(m.group(1), 16)), text).replace("…", "...")
     return _SPACES.sub(" ", _EMPHASIS.sub("", text.translate(_PUNCT))).casefold().strip()
 
 
 def closest(quote, records, permitted_actors=None):
     """Best fuzzy window for a quote that was not found anywhere, to steer a repair retry."""
-    import difflib
     q = normalized(quote)
     best = (0.0, None)
     for rid, record in records.items():
@@ -247,6 +236,7 @@ def permitted_record(record, channel, side):
 
 
 def citation_problems(cite, records, side):
+    """Problems with one citation; may relabel channel/event_id in place (keeping *_as_cited)."""
     if not isinstance(cite, dict) or set(cite) - {"channel_as_cited", "event_id_as_cited"} != set(CITATION_KEYS):
         return [f"citation must have exactly the keys {list(CITATION_KEYS)}"]
     if not all(isinstance(cite[k], str) for k in CITATION_KEYS):

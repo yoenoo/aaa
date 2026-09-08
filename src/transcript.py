@@ -62,7 +62,9 @@ def _load_dim_summaries(source: str) -> dict[str, str]:
         if path.exists():
             data = yaml.safe_load(path.read_text()) or {}
             if isinstance(data, dict):
-                out = {k: _short_dim_summary(str(v)) for k, v in data.items()}
+                # v3 dimensions.yaml values are {rubric, polarity, evidence} mappings.
+                out = {k: _short_dim_summary(str(v.get("rubric", "") if isinstance(v, dict) else v))
+                       for k, v in data.items()}
     except Exception as e:
         logger.warning("Failed to load dim summaries for %r: %s", source, e)
     _JUDGE_DIMS_CACHE[source] = out
@@ -625,6 +627,13 @@ def convert_log(log: EvalLog, log_id: str = "") -> dict[str, Any]:
         "highlights": [],
         "extras": {},             # per-judge extra blocks (e.g. infrastructure_issues)
         "parse_status": {},       # per-judge parse status
+        # v3 structured judges only (empty for v1/v2 logs):
+        "applicability": {},      # dim -> exercised | not_exercised | unassessable
+        "reasons": {},            # dim -> judge's reason text
+        "evidence": {},           # dim -> [{event_id (viewer), record_id, channel, quote, ...}]
+        "unresolved_limitations": {},  # per-judge list
+        "coverage": {},           # per-judge packet coverage verdict
+        "attempts": {},           # per-judge attempt statuses (no prompts/responses)
     }
     for scorer_key, scorer_result in (sample.scores or {}).items():
         meta = scorer_result.metadata or {}
@@ -655,12 +664,47 @@ def convert_log(log: EvalLog, log_id: str = "") -> dict[str, Any]:
         elif isinstance(hl_raw, list):
             for h in hl_raw:
                 if isinstance(h, dict):
-                    judge["highlights"].append({
+                    entry = {
                         "event_id": str(h.get("event_id") or ""),
                         "quoted_text": str(h.get("quoted_text") or h.get("quote") or ""),
                         "note": str(h.get("note") or h.get("comment") or ""),
                         "source": source,
-                    })
+                    }
+                    # v3 citations carry the dimension and packet provenance.
+                    for key in ("dimension", "score", "applicability", "record_id", "channel"):
+                        if h.get(key) is not None:
+                            entry[key] = h[key]
+                    judge["highlights"].append(entry)
+
+        # v3: per-dimension applicability so a not_exercised/unassessable dim (score 1)
+        # is distinguishable from an exercised 1, plus reasons and cited evidence.
+        applicability = meta.get("applicability")
+        if isinstance(applicability, dict):
+            judge["applicability"].update({str(k): str(v) for k, v in applicability.items()})
+        reasons = meta.get("reasons")
+        if isinstance(reasons, dict):
+            judge["reasons"].update({str(k): str(v) for k, v in reasons.items()})
+        evidence = meta.get("evidence")
+        if isinstance(evidence, dict):
+            mapping = meta.get("packet_mapping") if isinstance(meta.get("packet_mapping"), dict) else {}
+            for dim, cites in evidence.items():
+                judge["evidence"][str(dim)] = [
+                    {"event_id": str((mapping.get(c.get("event_id"), {}) or {}).get("viewer_event_id") or ""),
+                     "record_id": str(c.get("event_id") or ""), "channel": str(c.get("channel") or ""),
+                     "quote": str(c.get("quote") or ""), "interpretation": str(c.get("interpretation") or ""),
+                     "alternative_interpretation": str(c.get("alternative_interpretation") or ""),
+                     **{k: str(v) for k, v in c.items() if k.endswith("_as_cited")}}
+                    for c in (cites or []) if isinstance(c, dict)
+                ]
+        for key in ("unresolved_limitations", "coverage"):
+            if meta.get(key) is not None:
+                judge[key][source] = meta[key]
+        attempts = meta.get("attempts")
+        if isinstance(attempts, list):
+            judge["attempts"][source] = [
+                {k: v for k, v in a.items() if k in ("number", "status", "error", "error_type", "throttled", "repair_feedback", "stop_reason", "usage")}
+                for a in attempts if isinstance(a, dict)
+            ]
 
         extras = meta.get("extras")
         if isinstance(extras, dict) and extras:
