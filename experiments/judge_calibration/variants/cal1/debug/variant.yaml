@@ -1,0 +1,4 @@
+family: debug
+base: re3
+owner: calibration
+notes: cal1 = re3 + target_task_completion does not penalize correct refusals. CANDIDATE - not verified on the benchmark yet.
