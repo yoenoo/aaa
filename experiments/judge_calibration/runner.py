@@ -166,7 +166,7 @@ def throttled(error):
     """Rate limits, overloads and transient transport failures: no completion was produced."""
     text = str(error).lower()
     return (getattr(error, "status_code", None) in RETRYABLE_STATUS
-            or any(k in text for k in ("rate limit", "rate_limit", "overloaded", "connection error", "timed out")))
+            or any(k in text for k in ("rate limit", "rate_limit", "overloaded", "connection error", "connectionerror", "retryerror", "timed out", "timeout")))
 
 
 async def generate_with_backoff(model, messages, config, attempt):

@@ -202,7 +202,7 @@ def normalized(text):
 
 
 def closest(quote, records, permitted_actors=None):
-    """Best fuzzy window for a quote that was not found anywhere, to steer a repair retry."""
+    """Best-matching RAW source line(s) for a quote that was not found, to steer a repair retry."""
     import difflib
     q = normalized(quote)
     best = (0.0, None)
@@ -213,19 +213,16 @@ def closest(quote, records, permitted_actors=None):
             src = record.get(channel)
             if not isinstance(src, str) or not src:
                 continue
-            n = normalized(src)
-            step = max(1, len(q) // 2)
-            for i in range(0, max(1, len(n) - len(q) + 1), step):
-                window = n[i:i + len(q) + step]
-                ratio = difflib.SequenceMatcher(None, q, window).ratio()
+            lines = [l for l in src.splitlines() if l.strip()]
+            candidates = lines + [a + "\n" + b for a, b in zip(lines, lines[1:])]
+            for cand in candidates:
+                ratio = difflib.SequenceMatcher(None, q, normalized(cand)).ratio()
                 if ratio > best[0]:
-                    best = (ratio, (rid, channel, src, i))
-    if best[0] < 0.6 or best[1] is None:
+                    best = (ratio, (rid, channel, cand))
+    if best[0] < 0.5 or best[1] is None:
         return None
-    rid, channel, src, i = best[1]
-    n = normalized(src)
-    return rid, channel, n[max(0, i - 20):i + len(q) + 40]
-
+    rid, channel, cand = best[1]
+    return rid, channel, cand[:400]
 
 def locate(quote, records):
     """Where a quote actually occurs, for repair feedback: [(record_id, channel, actor)]."""
@@ -262,9 +259,18 @@ def citation_problems(cite, records, side):
     else:
         ok = actor in ALL_ACTORS and channel in ALL_CHANNELS
     problems = []
+    source = record.get(channel)
+    if not ok and cite["quote"] and isinstance(source, str) and normalized(cite["quote"]) in normalized(source):
+        # Verbatim text cited from a non-permitted copy (e.g. the auditor's query_target message)
+        # that also exists in exactly one permitted record: relabel to the target-visible copy.
+        copies = [(r, c, a) for r, c, a in locate(cite["quote"], records) if permitted_record(records[r], c, side)]
+        if len(copies) == 1:
+            cite["event_id_as_cited"], cite["channel_as_cited"] = cite["event_id"], channel
+            cite["event_id"], cite["channel"] = copies[0][0], copies[0][1]
+            record, channel, ok = records[cite["event_id"]], cite["channel"], True
+            source = record.get(channel)
     if not ok:
         problems.append(f"{cite['event_id']} (actor={actor}, channel={channel}) is not permitted {side}-side evidence")
-    source = record.get(channel)
     if not cite["quote"]:
         problems.append(f"{cite['event_id']}: empty quote")
     elif OMISSION_MARKER.search(cite["quote"]):
@@ -289,8 +295,8 @@ def citation_problems(cite, records, side):
                     for r, c, a in hits[:3])
             else:
                 near = closest(cite["quote"], records)
-                where = (f"; the quote was not found in any record. Closest source text ({near[0]}/{near[1]}, normalized): "
-                         f"\"{near[2]}\" - copy from the source, do not reword" if near else "; the quote was not found in any record")
+                where = (f"; the quote was not found in any record. Closest source line ({near[0]}/{near[1]}, copy it EXACTLY): "
+                         f"{json.dumps(near[2])}" if near else "; the quote was not found in any record")
             problems.append(f"{cite['event_id']}/{channel}: quote is not a contiguous substring of the record channel "
                             "(compared case-insensitively, ignoring whitespace runs and markdown emphasis)" + where)
     return problems

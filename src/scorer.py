@@ -389,7 +389,7 @@ def _throttled(error: Exception) -> bool:
     """Rate limits, overloads and transient transport failures: no completion was produced."""
     text = str(error).lower()
     return (getattr(error, "status_code", None) in _RETRYABLE_STATUS
-            or any(k in text for k in ("rate limit", "rate_limit", "overloaded", "connection error", "timed out")))
+            or any(k in text for k in ("rate limit", "rate_limit", "overloaded", "connection error", "connectionerror", "retryerror", "timed out", "timeout")))
 
 
 def _fatal(error: Exception) -> bool:

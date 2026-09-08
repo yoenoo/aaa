@@ -27,14 +27,15 @@ def sha(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
-def build(output):
+def build(output, sources=None, expected_audits=18):
     output = Path(output).resolve()
     if output.exists():
         raise ValueError("Choose a fresh output directory")
-    rows, audits, sources = [], [], {}
-    for path in SOURCES:
+    rows, audits, sources_sha = [], [], {}
+    for path in (sources or SOURCES):
+        path = Path(path).resolve()
         log = read_eval_log(str(path), resolve_attachments="full")
-        sources[str(path.relative_to(ROOT))] = sha(path)
+        sources_sha[str(path.relative_to(ROOT))] = sha(path)
         for sample in log.samples or []:
             if sample.error or any(a["uuid"] == sample.uuid for a in audits):
                 continue
@@ -45,15 +46,15 @@ def build(output):
             audits.append({"uuid": sample.uuid, "seed": sample.metadata["source_scenario"], "source": str(path.relative_to(ROOT)),
                            "target_outputs": len(packet["requests"]), "records": len(packet["records"]),
                            "coverage": packet["coverage"], "record_mapping": mapping})
-    if len(audits) != 18:
-        raise ValueError(f"Expected 18 completed audits, found {len(audits)}")
+    if len(audits) != expected_audits:
+        raise ValueError(f"Expected {expected_audits} completed audits, found {len(audits)}")
     output.mkdir(parents=True)
     (output / "private").mkdir()
     (output / "inputs.jsonl").write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows))
     (output / "private" / "audits.json").write_text(json.dumps(audits, indent=2))
     manifest = {"version": "petri-full-audits-v1", "created_at": datetime.now(timezone.utc).isoformat(),
-                "audits": len(audits), "jobs": len(rows), "sources_sha256": sources,
-                "sha256": {"inputs.jsonl": sha(output / "inputs.jsonl"), "private/audits.json": sha(output / "private/audits.json")},
+                "audits": len(audits), "jobs": len(rows), "sources_sha256": sources_sha,
+                                "sha256": {"inputs.jsonl": sha(output / "inputs.jsonl"), "private/audits.json": sha(output / "private/audits.json")},
                 "builder_sha256": sha(__file__)}
     (output / "manifest.json").write_text(json.dumps(manifest, indent=2))
     return {"output": str(output), "audits": len(audits), "jobs": len(rows)}
@@ -62,4 +63,7 @@ def build(output):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, default=ROOT / "logs/judge-calibration/petri-inputs-v1")
-    print(json.dumps(build(parser.parse_args().output), indent=2))
+    parser.add_argument("--sources", type=Path, nargs="*", help="Petri .eval logs (default: the 18-audit Gemini 3.1 corpus)")
+    parser.add_argument("--expect-audits", type=int, default=18)
+    args = parser.parse_args()
+    print(json.dumps(build(args.output, args.sources, args.expect_audits), indent=2))
