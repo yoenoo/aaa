@@ -364,6 +364,33 @@ def _truncate(record, channel, cap, head_only=False):
     return omitted
 
 
+HISTORY_CALLS_MARKER = "\nRecorded historical tool calls:\n"
+
+
+def dedupe_history(packet):
+    """Lossless: an assistant_history record that repeats a generated target output verbatim is
+    replaced by a reference (`same_as_output`), and the `tool_calls` list (already present as
+    `tool_calls_json`) plus `nontext_omitted: false` flags are dropped. Returns records rewritten."""
+    outputs = {}
+    for r in packet["records"]:
+        if r.get("actor") == "target":
+            text = r.get("assistant_text") or ""
+            if r.get("tool_calls_json"):
+                text += HISTORY_CALLS_MARKER + r["tool_calls_json"]
+            outputs.setdefault(text, r["id"])
+    rewritten = 0
+    for r in packet["records"]:
+        if r.get("actor") == "assistant_history" and r.get("text") in outputs and not r.get("same_as_output"):
+            r["same_as_output"] = outputs[r["text"]]
+            r["text"] = ""
+            r.pop("reasoning_summary", None)
+            rewritten += 1
+        r.pop("tool_calls", None)
+        if r.get("nontext_omitted") is False:
+            r.pop("nontext_omitted")
+    return rewritten
+
+
 def prefix_requests(packet):
     """Lossless: a request whose input_ids repeat the previous request's whole input list is
     written as {"prefix": <previous request id>, "then": [new ids]}. Returns the number rewritten."""
@@ -397,8 +424,8 @@ def compact(packet, budget_chars=DEFAULT_BUDGET_CHARS):
 
     Stages: (a) tool_definitions text beyond 20k (head only); (b) environment-side `text`
     (and auditor_context `tool_calls_json`) at 16k -> 8k -> 4k -> 2k -> 1k, head + tail;
-    (c) target `reasoning_summary` at 8k -> 4k -> 2k; (d) lossless prefix encoding of
-    request input_ids (see prefix_requests); (e) floors: environment 512 + reasoning 1k,
+    (c) target `reasoning_summary` at 8k -> 4k -> 2k — all preceded by (d) the lossless prefix
+    encoding of request input_ids (see prefix_requests), which runs FIRST; (e) floors: environment 512 + reasoning 1k,
     then 256 + 512; (f) still over: coverage `insufficient`. Target `assistant_text` and
     `tool_calls_json` are never touched. Truncated records get `truncated`/`omitted_chars`;
     the packet gets `truncation` and a limitations sentence.
@@ -407,7 +434,7 @@ def compact(packet, budget_chars=DEFAULT_BUDGET_CHARS):
     if packet_chars(packet) <= budget_chars:
         return packet
     records = packet["records"]
-    stats = {"stage": None, "records": 0, "omitted_chars": 0, "prefixed_requests": 0}
+    stats = {"stage": None, "records": 0, "omitted_chars": 0, "prefixed_requests": 0, "deduplicated_history_records": 0}
     touched = set()
     goal = budget_chars - TRAILER_RESERVE  # room for the truncation stats + limitations sentence
 
@@ -422,19 +449,24 @@ def compact(packet, budget_chars=DEFAULT_BUDGET_CHARS):
         return packet_chars(packet) <= goal
 
     def prefix(stage):
-        stats["prefixed_requests"] = prefix_requests(packet)
+        if stage == "dedupe_history":
+            stats["deduplicated_history_records"] = dedupe_history(packet)
+        else:
+            stats["prefixed_requests"] = prefix_requests(packet)
         stats["stage"] = stage
         return packet_chars(packet) <= goal
 
     env = lambda r: r.get("actor") in TRUNCATED_ACTORS
     auditor = lambda r: r.get("actor") == "auditor_context"
     target = lambda r: r.get("actor") == "target"
-    steps = [("tool_definitions", lambda r: r.get("actor") == "tool_definitions", "text", TOOL_DEFINITIONS_CAP, True)]
+    # Lossless first: the request index (input_ids) grows quadratically with turns and is
+    # usually the bulk of a long packet; only truncate real text if that is not enough.
+    steps = [("dedupe_history",), ("request_prefixes",),
+             ("tool_definitions", lambda r: r.get("actor") == "tool_definitions", "text", TOOL_DEFINITIONS_CAP, True)]
     for cap in ENVIRONMENT_CAPS:
         steps += [(f"environment_text_{cap}", env, "text", cap), (f"environment_text_{cap}", auditor, "tool_calls_json", cap)]
     for cap in REASONING_CAPS:
         steps.append((f"target_reasoning_{cap}", target, "reasoning_summary", cap))
-    steps.append(("request_prefixes",))
     for env_cap, reasoning_cap in FLOOR_CAPS:
         steps += [(f"floor_{env_cap}", env, "text", env_cap), (f"floor_{env_cap}", auditor, "tool_calls_json", env_cap),
                   (f"floor_{env_cap}", target, "reasoning_summary", reasoning_cap)]
@@ -446,8 +478,12 @@ def compact(packet, budget_chars=DEFAULT_BUDGET_CHARS):
     stats["records"] = len(touched)
     stats["budget_chars"] = budget_chars
     packet["truncation"] = stats
-    packet["limitations"] = packet["limitations"] + TRUNCATION_LIMITATION
-    if under:
+    lossless = stats["omitted_chars"] == 0 and not touched
+    if not lossless:
+        packet["limitations"] = packet["limitations"] + TRUNCATION_LIMITATION
+    if under and lossless:
+        stats["lossless"] = True  # references and prefixes only: nothing the judge could cite was removed
+    elif under:
         packet["coverage"] = "truncated_recorded_audit"
     else:
         stats["stage"] = "insufficient"

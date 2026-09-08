@@ -101,7 +101,7 @@ class CompactTests(unittest.TestCase):
             if before["actor"] == "target":
                 self.assertEqual(after["assistant_text"], before["assistant_text"])
                 self.assertEqual(after["tool_calls_json"], before["tool_calls_json"])
-                self.assertEqual(after["tool_calls"], before["tool_calls"])
+                self.assertNotIn("tool_calls", after)  # duplicate of tool_calls_json, dropped losslessly
 
     def test_stage_d_prefix_encoding_is_lossless(self):
         packet = big_packet(env_chars=100, tools_chars=100, reasoning_chars=100)
@@ -115,7 +115,9 @@ class CompactTests(unittest.TestCase):
         size = jp.packet_chars(packet)
         out = jp.compact(packet, size // 4)
         self.assertEqual(out["truncation"]["stage"], "request_prefixes")
-        self.assertEqual(out["coverage"], "truncated_recorded_audit")
+        self.assertEqual(out["coverage"], "complete_recorded_audit")  # lossless: coverage unchanged
+        self.assertTrue(out["truncation"]["lossless"])
+        self.assertNotIn("shortened", out["limitations"])
         self.assertGreater(out["truncation"]["prefixed_requests"], 390)
         self.assertLessEqual(jp.packet_chars(out), size // 4)
         encoded = [r["input_ids"] for r in out["requests"] if isinstance(r["input_ids"], dict)]
@@ -220,3 +222,32 @@ class SlowAllAaaLogsCompactionTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DedupeHistoryTests(unittest.TestCase):
+    def test_history_repeating_a_target_output_becomes_a_reference(self):
+        packet = big_packet(env_chars=100, tools_chars=100, reasoning_chars=100)
+        target = next(r for r in packet["records"] if r["actor"] == "target")
+        text = target["assistant_text"] + (jp.HISTORY_CALLS_MARKER + target["tool_calls_json"] if target.get("tool_calls_json") else "")
+        packet["records"].insert(0, {"id": "input-0099", "branch": 1, "actor": "assistant_history", "text": text, "nontext_omitted": False})
+        n = jp.dedupe_history(packet)
+        hist = next(r for r in packet["records"] if r["id"] == "input-0099")
+        self.assertGreaterEqual(n, 1)  # the fixture may already contain a matching history record
+        self.assertEqual(hist["same_as_output"], target["id"])
+        self.assertEqual(hist["text"], "")
+        self.assertNotIn("nontext_omitted", hist)
+        self.assertEqual(jp.dedupe_history(packet), 0)  # idempotent
+
+    def test_compact_prefers_dedupe_before_any_truncation(self):
+        packet = big_packet(env_chars=100, tools_chars=100, reasoning_chars=100)
+        target = next(r for r in packet["records"] if r["actor"] == "target")
+        target["assistant_text"] = "X" * 50_000
+        text = target["assistant_text"] + (jp.HISTORY_CALLS_MARKER + target["tool_calls_json"] if target.get("tool_calls_json") else "")
+        for k in range(5):
+            packet["records"].insert(0, {"id": f"input-01{k:02d}", "branch": 1, "actor": "assistant_history", "text": text})
+        size = jp.packet_chars(packet)
+        out = jp.compact(packet, size - 100_000)
+        self.assertEqual(out["truncation"]["stage"], "dedupe_history")
+        self.assertEqual(out["truncation"]["deduplicated_history_records"], 5)
+        self.assertEqual(out["truncation"]["omitted_chars"], 0)
+        self.assertEqual(out["coverage"], "complete_recorded_audit")
