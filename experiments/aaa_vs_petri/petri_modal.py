@@ -47,8 +47,8 @@ def run_secret():
     return modal.Secret.from_dict(values)
 
 
-@app.function(image=image, secrets=[run_secret()], timeout=3600, retries=0, max_containers=16, cpu=2, memory=4096)
-def run_seed(seed_file: str, target: str, auditor: str, max_turns: int, realism_filter: float) -> dict:
+@app.function(image=image, secrets=[run_secret()], timeout=14400, retries=0, max_containers=16, cpu=2, memory=4096)
+def run_seed(seed_file: str, target: str, auditor: str, max_turns: int, realism_filter: float, time_limit: int = 1800) -> dict:
     sa = Path("/tmp/vertex-sa.json")
     sa.write_text(os.environ["GOOGLE_SA_JSON"])
     env = {**os.environ, "GOOGLE_APPLICATION_CREDENTIALS": str(sa), "INSPECT_LOG_FORMAT": "eval"}
@@ -60,7 +60,7 @@ def run_seed(seed_file: str, target: str, auditor: str, max_turns: int, realism_
            "-T", f"seed_dir={one}", "-T", f"max_turns={max_turns}", "-T", f"realism_filter={realism_filter}",
            "--model-role", f"auditor={auditor}", "--model-role", f"realism={auditor}", "--model-role", f"target={target}",
            "--log-dir", str(logs), "--max-samples", "1", "--max-connections", "8", "--timeout", "300",
-           "--time-limit", "1800", "--display", "plain"]
+           "--time-limit", str(time_limit), "--display", "plain"]
     proc = subprocess.run(cmd, capture_output=True, text=True, cwd="/opt/petri", env=env)
     evals = sorted(logs.glob("*.eval"))
     return {"seed_file": seed_file, "returncode": proc.returncode, "stdout_tail": proc.stdout[-3000:], "stderr_tail": proc.stderr[-3000:],
@@ -70,7 +70,7 @@ def run_seed(seed_file: str, target: str, auditor: str, max_turns: int, realism_
 @app.local_entrypoint()
 def main(target: str = "google/gemini-3.8-flash", auditor: str = "anthropic/claude-opus-4-8",
          log_dir: str = "logs/petri-trajectories/gemini-3.8-flash-modal", max_turns: int = 30, realism_filter: float = 0.6,
-         seeds: str = ""):
+         seeds: str = "", time_limit: int = 1800):
     out = ROOT / log_dir
     out.mkdir(parents=True, exist_ok=True)
     files = sorted(p.name for p in SEED_DIR.glob("*.md"))
@@ -78,7 +78,7 @@ def main(target: str = "google/gemini-3.8-flash", auditor: str = "anthropic/clau
         files = [f for f in files if f in seeds.split(",")]
     print(f"launching {len(files)} seeds on Modal -> {out}", flush=True)
     summary = []
-    for r in run_seed.map(files, kwargs={"target": target, "auditor": auditor, "max_turns": max_turns, "realism_filter": realism_filter}):
+    for r in run_seed.map(files, kwargs={"target": target, "auditor": auditor, "max_turns": max_turns, "realism_filter": realism_filter, "time_limit": time_limit}):
         if r["eval_bytes"]:
             (out / r["eval_name"]).write_bytes(r["eval_bytes"])
         (out / f"{r['seed_file']}.stdout.txt").write_text(r["stdout_tail"] + "\n--- stderr ---\n" + r["stderr_tail"])

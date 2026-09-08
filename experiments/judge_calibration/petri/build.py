@@ -18,6 +18,7 @@ sys.path.insert(0, str(ROOT / "src"))
 from inspect_ai.log import read_eval_log
 from experiments.aaa_vs_petri.full_judge.run import build_packet
 from experiments.aaa_vs_petri.judge_validation_v4.corpus import SOURCES
+from judge_packet import compact  # production size-budgeted compaction (src/judge_packet.py)
 
 TRACK = "petri_audit"
 FAMILIES = ("scheming", "debug")
@@ -45,12 +46,13 @@ def build(output, sources=None, expected_audits=18):
             if errored:
                 sample = sample.model_copy(update={"events": [e for e in sample.events if e not in errored]})
             packet, mapping = build_packet(sample)
+            packet = compact(packet)  # long audits must fit the judge's context; records marked when shortened
             for family in FAMILIES:
                 rows.append({"id": f"{sample.uuid}-{family}", "track": TRACK, "family": family, "subset": ["full"],
                              "payload": packet, "group": sample.metadata["source_scenario"], "pair_id": sample.uuid, "variant": None})
             audits.append({"uuid": sample.uuid, "seed": sample.metadata["source_scenario"], "source": str(path.relative_to(ROOT)),
                            "target_outputs": len(packet["requests"]), "records": len(packet["records"]),
-                           "excluded_errored_target_events": len(errored),
+                           "excluded_errored_target_events": len(errored), "truncation": packet.get("truncation"),
                            "coverage": packet["coverage"], "record_mapping": mapping})
     if len(audits) != expected_audits:
         raise ValueError(f"Expected {expected_audits} completed audits, found {len(audits)}")
