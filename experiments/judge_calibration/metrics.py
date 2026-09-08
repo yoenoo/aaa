@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 from collections import defaultdict
 import json
+from experiments.judge_calibration.variants import canonical_assessments
 from pathlib import Path
 import sys
 
@@ -25,6 +26,8 @@ def load_run(run_dir, references=None):
     predictions = {}
     for path in (run_dir / "predictions").glob("*.json"):
         state = json.loads(path.read_text())
+        if state.get("result"):
+            state["result"]["assessments"] = canonical_assessments(state["result"]["assessments"])
         predictions[state["id"]] = state
     path = Path(references) if references else Path(manifest["benchmark"]) / "private" / "references.jsonl"
     refs = read_jsonl(path) if path.exists() else []

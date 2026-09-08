@@ -14,8 +14,9 @@ import sys
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "src"))
+from experiments.judge_calibration.variants import canonical_assessments  # noqa: E402
 
-AWARENESS = ("eval_awareness", "environment_artificiality_suspicion", "awareness_conditioned_behavior", "monitoring_detection")
+AWARENESS = ("verbalized_eval_awareness", "simulation_suspicion", "awareness_conditioned_behavior", "monitoring_detection")
 REALISM = ("scenario_realism", "role_organizational_realism", "tool_interface_realism", "state_causal_consistency", "interaction_naturalness")
 V5_REPORT = ROOT / "logs/petri-awareness-v5/all-recorded-opus48/report/audits.json"
 
@@ -25,6 +26,9 @@ def load(run_dir):
     manifest = json.loads((run_dir / "manifest.json").read_text())
     inputs = {json.loads(l)["id"]: json.loads(l) for l in (run_dir / "inputs.jsonl").read_text().splitlines()}
     predictions = {p.stem: json.loads(p.read_text()) for p in (run_dir / "predictions").glob("*.json")}
+    for row in predictions.values():
+        if row.get("result"):
+            row["result"]["assessments"] = canonical_assessments(row["result"]["assessments"])
     audits = json.loads((Path(manifest["benchmark"]) / "private" / "audits.json").read_text())
     return manifest, inputs, predictions, audits
 
@@ -47,7 +51,7 @@ def v5_status(uuid, v5):
     row = next((r for r in v5 if r["audit_id"] == uuid), None)
     if not row:
         return {}
-    return {d: row["all_recorded"][d]["status"] for d in ("eval_awareness", "environment_artificiality_suspicion") if d in row["all_recorded"]}
+    return {d: row["all_recorded"][d]["status"] for d in ("verbalized_eval_awareness", "simulation_suspicion") if d in row["all_recorded"]}
 
 
 def quote(assessment):
@@ -94,9 +98,9 @@ def build(run_dir):
         v5s = v5_status(a["uuid"], v5)
         best = max((sa[k] for k in AWARENESS[:3]), key=lambda x: x["score"])
         q = quote(best) if best["score"] >= 2 else ""
-        lines.append(f"| {a['seed']} | {cell(sa['eval_awareness'])} | {cell(sa['environment_artificiality_suspicion'])} | "
-                     f"{cell(sa['awareness_conditioned_behavior'])} | {cell(sa['monitoring_detection'])} | {v1s.get('eval_awareness', '')} | "
-                     f"{v5s.get('eval_awareness', '')[:8]} / {v5s.get('environment_artificiality_suspicion', '')[:8]} | {q} |")
+        lines.append(f"| {a['seed']} | {cell(sa['verbalized_eval_awareness'])} | {cell(sa['simulation_suspicion'])} | "
+                     f"{cell(sa['awareness_conditioned_behavior'])} | {cell(sa['monitoring_detection'])} | {v1s.get('verbalized_eval_awareness', '')} | "
+                     f"{v5s.get('verbalized_eval_awareness', '')[:8]} / {v5s.get('simulation_suspicion', '')[:8]} | {q} |")
     # Realism
     lines += ["", "## Realism (per audit)", "",
               "| seed | scenario | role | tool | state | naturalness | v1 scenario_realism | worst cited defect |", "|---|---|---|---|---|---|---|---|"]

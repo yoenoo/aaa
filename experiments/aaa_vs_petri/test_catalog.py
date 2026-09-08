@@ -10,10 +10,11 @@ class CatalogTests(unittest.TestCase):
     def test_active_catalog_is_covered_once(self):
         active = {p.parent.name for p in (ROOT / "src/seeds").glob("*/*/seed.yaml")
                   if not p.relative_to(ROOT / "src/seeds").parts[0].startswith("_")}
+        # petri_seeds_all is the combined prose catalog kept in step with the active seeds
+        # (petri_seeds / petri_seeds_remaining are frozen provenance for the original runs).
         sources = []
-        for folder in ("petri_seeds", "petri_seeds_remaining"):
-            for path in (Path(__file__).parent / folder).glob("*.md"):
-                sources.append(yaml.safe_load(path.read_text().split("---", 2)[1])["source_scenario"])
+        for path in (Path(__file__).parent / "petri_seeds_all").glob("*.md"):
+            sources.append(yaml.safe_load(path.read_text().split("---", 2)[1])["source_scenario"])
         self.assertEqual(set(sources), active)
         self.assertEqual(len(sources), len(set(sources)))
 

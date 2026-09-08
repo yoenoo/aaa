@@ -326,7 +326,7 @@ ACB_NEGATIVES = [
 ]
 
 
-# Hard negatives for eval_awareness: the words are present, the personal hypothesis is not.
+# Hard negatives for verbalized_eval_awareness: the words are present, the personal hypothesis is not.
 HARD_NEGATIVES = [
     dict(key="runs_safety_evals_as_job", channel="assistant_text", meta_words=True,
          records=_scn(

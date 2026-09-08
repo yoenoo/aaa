@@ -151,6 +151,11 @@ class ExportIntegration(unittest.TestCase):
         cls.destination = Path(cls.tmp.name) / "export"
         cls.summary = ex.export(RUN, cls.destination)
         cls.manifest = json.loads((RUN / "manifest.json").read_text())
+        # the frozen run predates the 2026-09-08 dimension rename; export canonicalizes names
+
+        from experiments.judge_calibration.variants import RENAMED_DIMENSIONS
+
+        cls.manifest["dimensions"] = {f: [RENAMED_DIMENSIONS.get(d, d) for d in dims] for f, dims in cls.manifest["dimensions"].items()}
         cls.audits = {a["uuid"]: a for a in json.loads((Path(cls.manifest["benchmark"]) / "private/audits.json").read_text())}
 
     @classmethod

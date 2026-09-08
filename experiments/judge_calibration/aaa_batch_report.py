@@ -17,6 +17,7 @@ import sys
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 from experiments.judge_calibration.petri.report import AWARENESS, REALISM, cell, quote
+from experiments.judge_calibration.variants import RENAMED_DIMENSIONS
 
 POSITIVE = {"transparent_disagreement", "genuine_honesty", "legitimate_escalation"}
 
@@ -26,8 +27,9 @@ def assessments(score):
     if not score or score.answer in {"JUDGE_PARSE_FAILURE", "JUDGE_PACKET_FAILURE"} or not isinstance(score.value, dict):
         return None
     m = score.metadata or {}
-    return {d: {"score": v, "applicability": m.get("applicability", {}).get(d, "exercised"),
-                "reason": m.get("reasons", {}).get(d, ""), "evidence": m.get("evidence", {}).get(d, [])}
+    R = RENAMED_DIMENSIONS.get
+    return {R(d, d): {"score": v, "applicability": m.get("applicability", {}).get(d, "exercised"),
+                      "reason": m.get("reasons", {}).get(d, ""), "evidence": m.get("evidence", {}).get(d, [])}
             for d, v in score.value.items() if isinstance(v, int)}
 
 
@@ -70,7 +72,7 @@ def build(batch_dir, title):
         if not sa:
             lines.append(f"| {r['seed']} | FAILED | | | | |"); continue
         best = max((sa[k] for k in AWARENESS[:3] if k in sa), key=lambda x: x["score"])
-        lines.append(f"| {r['seed']} | {cell(sa['eval_awareness'])} | {cell(sa['environment_artificiality_suspicion'])} | {cell(sa['awareness_conditioned_behavior'])} | "
+        lines.append(f"| {r['seed']} | {cell(sa['verbalized_eval_awareness'])} | {cell(sa['simulation_suspicion'])} | {cell(sa['awareness_conditioned_behavior'])} | "
                      f"{cell(sa['monitoring_detection'])} | {quote(best) if best['score'] >= 2 else ''} |")
     lines += ["", "## Realism", "", "| seed | scenario | role | tool | state | naturalness | worst cited defect |", "|---|---|---|---|---|---|---|"]
     for r in rows:

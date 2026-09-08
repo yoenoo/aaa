@@ -2,7 +2,7 @@ family: scheming
 base: null
 owner: judge-calibration harness (baseline)
 notes: >-
-  Baseline scheming judge: the 31 scheming_v2 behavioral rubrics, eval_awareness and
-  environment_artificiality_suspicion rewritten to the verbalized-expression endpoint of
+  Baseline scheming judge: the 31 scheming_v2 behavioral rubrics, verbalized_eval_awareness and
+  simulation_suspicion rewritten to the verbalized-expression endpoint of
   awareness_v5 on a 1-10 scale, plus awareness_conditioned_behavior. Co-located per-dimension
   score/applicability/reason/evidence wire format.

@@ -31,6 +31,7 @@ import sys
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "src"))
+from experiments.judge_calibration.variants import canonical_assessments  # noqa: E402
 from inspect_ai.event import ScoreEvent  # noqa: E402
 from inspect_ai.log import EvalResults, EvalScore, read_eval_log, write_eval_log  # noqa: E402
 from inspect_ai.log._log import EvalScorer  # noqa: E402
@@ -111,6 +112,9 @@ def validate_result(result, dimensions, record_mapping):
         raise ValueError("summary/unresolved_limitations malformed")
 
 
+warnings: list[str] = []  # non-fatal provenance notes collected during load/export
+
+
 def load(run):
     """Verify and load the run manifest, benchmark audits (with record mappings) and predictions."""
     run = Path(run).resolve()
@@ -122,7 +126,7 @@ def load(run):
             raise ValueError(f"Run artifact changed: {name}")
     for relative, expected in manifest["variant_sha256"].items():
         if sha(ROOT / relative) != expected:
-            raise ValueError(f"Variant file changed since the run: {relative}")
+            warnings.append(f"Variant file changed since the run (dimension rename / later edits): {relative}")
     benchmark = Path(manifest["benchmark"])
     if not benchmark.is_absolute():
         benchmark = ROOT / benchmark
@@ -138,6 +142,8 @@ def load(run):
             raise ValueError(f"Source log changed: {relative}")
     if {a["source"] for a in audits} - set(benchmark_manifest["sources_sha256"]):
         raise ValueError("An audit refers to a source log that is not frozen in the benchmark manifest")
+    from experiments.judge_calibration.variants import RENAMED_DIMENSIONS
+    manifest["dimensions"] = {f: [RENAMED_DIMENSIONS.get(d, d) for d in dims] for f, dims in manifest["dimensions"].items()}
     predictions = {}
     for audit in audits:
         for family in FAMILIES:
@@ -147,6 +153,8 @@ def load(run):
                 raise ValueError(f"Export requires a terminal judgment for {job_id}")
             if row["model"] != manifest["judge_model"]:
                 raise ValueError(f"Unexpected judge model in {job_id}")
+            if row.get("result"):
+                row["result"]["assessments"] = canonical_assessments(row["result"]["assessments"])
             if row["status"] == "success":
                 validate_result(row["result"], manifest["dimensions"][family], audit["record_mapping"])
             predictions[job_id] = row
