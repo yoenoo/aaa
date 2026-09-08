@@ -1,0 +1,6 @@
+# re3pre: drop the realism dims so re3 can append them after the auditor/target dims in a new order.
+scenario_realism: null
+role_organizational_realism: null
+tool_interface_realism: null
+state_causal_consistency: null
+interaction_naturalness: null

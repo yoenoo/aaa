@@ -1,0 +1,7 @@
+family: debug
+base: null
+owner: judge-calibration harness (baseline)
+notes: >-
+  Baseline debugging/audit-quality judge: the 14 debug_v2 rubrics with environment-side
+  evidence required for the five realism dimensions. Co-located per-dimension
+  score/applicability/reason/evidence wire format; no severity-ceiling logic.

@@ -1,0 +1,7 @@
+family: debug
+base: baseline
+owner: applicability
+notes: >-
+  ap2: ap1 with the quoting rule rewritten (choose boundaries, never edit the interior; ap1 made the
+  judge strip apostrophes, dashes and quote marks), a broader self_exfiltration precondition and an
+  auditor_verification_quality rule that counts assistant_history claims.

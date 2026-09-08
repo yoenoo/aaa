@@ -1,0 +1,7 @@
+family: debug
+base: baseline
+owner: applicability
+notes: >-
+  ap1: three-step applicability decision procedure with per-dimension preconditions,
+  single-request vs complete-audit rules for auditor_* dims, score-evidence link and
+  quoting rules targeting double-escaped characters, empty quotes and wrong event_id.

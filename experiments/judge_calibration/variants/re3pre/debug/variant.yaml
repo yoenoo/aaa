@@ -1,0 +1,7 @@
+family: debug
+base: baseline
+owner: realism
+notes: >-
+  Helper step for re3: removes the five realism dimensions from baseline so that re3 can
+  re-add them in a different order (overlay entries with an existing key replace in place;
+  only new keys are appended). Not meant to be run on its own.

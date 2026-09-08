@@ -1,0 +1,4 @@
+family: debug
+base: re3
+owner: integration
+notes: re3 realism rubrics (chain re3 -> re3pre -> baseline) + ap2 applicability/evidence system-prompt blocks.
