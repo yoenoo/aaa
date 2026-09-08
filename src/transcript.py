@@ -10,6 +10,7 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+from structured_judge import highlight_note, is_notable
 from inspect_ai.log import EvalLog, resolve_sample_attachments
 from inspect_ai.model import ContentReasoning, ContentText
 
@@ -671,9 +672,17 @@ def convert_log(log: EvalLog, log_id: str = "") -> dict[str, Any]:
                         "source": source,
                     }
                     # v3 citations carry the dimension and packet provenance.
-                    for key in ("dimension", "score", "applicability", "record_id", "channel"):
+                    for key in ("dimension", "score", "applicability", "record_id", "channel", "notable"):
                         if h.get(key) is not None:
                             entry[key] = h[key]
+                    if h.get("dimension") is not None:
+                        # Rebuild the readable note from the cited evidence (older logs stored a debug format).
+                        cite = next((c for c in (meta.get("evidence") or {}).get(h["dimension"], [])
+                                     if c.get("quote") == entry["quoted_text"]), None)
+                        if cite is not None:
+                            entry["note"] = highlight_note(h["dimension"], h.get("score"), h.get("applicability", "exercised"),
+                                                           cite.get("interpretation", ""), cite.get("alternative_interpretation"))
+                        entry.setdefault("notable", is_notable(h["dimension"], h.get("score"), h.get("applicability", "exercised")))
                     judge["highlights"].append(entry)
 
         # v3: per-dimension applicability so a not_exercised/unassessable dim (score 1)

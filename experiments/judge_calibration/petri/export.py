@@ -31,6 +31,7 @@ import sys
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "src"))
+from structured_judge import highlight_note, is_notable  # noqa: E402
 from experiments.judge_calibration.variants import canonical_assessments  # noqa: E402
 from inspect_ai.event import ScoreEvent  # noqa: E402
 from inspect_ai.log import EvalResults, EvalScore, read_eval_log, write_eval_log  # noqa: E402
@@ -181,13 +182,9 @@ def _evidence_entries(dimension, assessment, record_mapping):
 
 
 def highlight_for(entry, score, applicability):
-    note = (f"{entry['dimension']} = {score}/10 ({applicability}); record {entry['record_id']} · {entry['channel']}. "
-            f"{entry['interpretation']}")
-    if entry.get("alternative_interpretation"):
-        note += f" Alternative reading: {entry['alternative_interpretation']}"
-    if entry.get("record_actor") in INPUT_ACTORS:
-        note += " Target-input context citation, anchored to the first target call that received it."
+    note = highlight_note(entry["dimension"], score, applicability, entry["interpretation"], entry.get("alternative_interpretation"))
     return {"event_id": entry["viewer_event_id"], "quoted_text": entry["quote"], "note": note,
+            "notable": is_notable(entry["dimension"], score, applicability),
             "dimension": entry["dimension"], "score": score, "applicability": applicability,
             "record_id": entry["record_id"], "channel": entry["channel"], "record_actor": entry.get("record_actor")}
 

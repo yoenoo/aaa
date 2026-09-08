@@ -42,6 +42,7 @@ from structured_judge import (
     object_only_additional_properties,
     validate,
     wire_schema,
+    highlight_note, is_notable,
 )
 
 logger = logging.getLogger(__name__)
@@ -432,8 +433,9 @@ def _v3_highlights(result: dict[str, Any], mapping: dict[str, Any]) -> list[dict
             highlights.append({
                 "event_id": anchor.get("viewer_event_id") or "",
                 "quoted_text": cite["quote"],
-                "note": f"{name}: {item['score']}/10 ({item['applicability']}) "
-                        f"[{cite['event_id']}/{cite['channel']}] {cite['interpretation']}",
+                "note": highlight_note(name, item["score"], item["applicability"], cite["interpretation"],
+                                       cite.get("alternative_interpretation")),
+                "notable": is_notable(name, item["score"], item["applicability"]),
                 "dimension": name, "score": item["score"], "applicability": item["applicability"],
                 "record_id": cite["event_id"], "channel": cite["channel"],
             })
