@@ -34,7 +34,12 @@ _JUDGE_EXTRAS: dict[str, tuple[str, ...]] = {
     "scheming": (),
     "debug": ("infrastructure_issues",),
     "legacy": (),
+    "scheming_v2": ("diagnostics",),
+    "debug_v2": ("infrastructure_issues", "diagnostics"),
 }
+
+# Opt-in v2 overlays preserve the existing production/default judge families.
+_JUDGE_BASES = {"scheming_v2": "scheming", "debug_v2": "debug"}
 
 
 def load_scaffold_information(scaffold_name: str) -> str:
@@ -69,6 +74,14 @@ def load_judge_spec(name: str) -> JudgeSpec:
     family_dir = _JUDGES_DIR / name
     system_prompt = (family_dir / "system.txt").read_text()
     dimensions = yaml.safe_load((family_dir / "dimensions.yaml").read_text())
+    if name in _JUDGE_BASES:
+        inherited = dict(load_judge_spec(_JUDGE_BASES[name]).dimensions)
+        for key, value in dimensions.items():
+            if value is None:
+                inherited.pop(key, None)
+            else:
+                inherited[key] = value
+        dimensions = inherited
     return JudgeSpec(
         name=name,
         system_prompt=system_prompt,

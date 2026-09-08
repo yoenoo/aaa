@@ -6,7 +6,7 @@ from inspect_ai.scorer import Scorer
 
 import hooks  # noqa: F401 — registers the post-task viewer dump hook
 from runtime._modal_fs_patch import apply as _apply_modal_fs_patch
-from scorer import debug_judge, legacy_judge, scheming_judge
+from scorer import debug_judge, debug_judge_v2, legacy_judge, scheming_judge, scheming_judge_v2
 from seeds import list_seeds, load_seed
 from solver import petri_solver
 
@@ -34,10 +34,12 @@ def _pick_scorers(judge_preset: str) -> list[Scorer]:
             return [scheming_judge(), debug_judge()]
         case "legacy":
             return [legacy_judge()]
+        case "v2" | "scheming_v2+debug_v2":
+            return [scheming_judge_v2(), debug_judge_v2()]
         case _:
             raise ValueError(
                 f"Unknown judge_preset {judge_preset!r}. "
-                "Expected: scheming, debug, scheming+debug, legacy."
+                "Expected: scheming, debug, scheming+debug, v2, legacy."
             )
 
 
