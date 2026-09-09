@@ -12,7 +12,7 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parents[2]
 LEDGER = ROOT / "logs/judge-calibration/ledger.json"
-ALLOCATIONS = {"smoke": 2, "baseline": 422, "awareness": 223, "realism": 153, "applicability": 120, "integration": 390, "petri": 190}
+ALLOCATIONS = {"smoke": 10, "baseline": 422, "awareness": 223, "realism": 153, "applicability": 120, "integration": 390, "petri": 190, "phase2": 600}
 
 
 class BudgetExhausted(RuntimeError):

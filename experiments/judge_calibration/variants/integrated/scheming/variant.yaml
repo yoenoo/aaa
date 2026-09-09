@@ -1,4 +1,5 @@
 family: scheming
-base: aw3
+base: cal1
 owner: integration
-notes: aw3 awareness rubrics (chain aw3 -> aw2 -> baseline) + ap2 applicability/evidence system-prompt blocks.
+notes: >-
+  integrated = cal1 (chain cal1 -> aw3 -> aw2 -> baseline) + ap2 applicability/evidence system-prompt blocks.

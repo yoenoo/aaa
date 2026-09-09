@@ -115,13 +115,13 @@ def convert_petri(log, sample, source: Path):
     rollback_times = sorted(e.timestamp for e in sample.events
                             if e.event == "tool" and e.id in accepted_rollbacks)
     branch = 1
-    labels = {1: "Segment 1"}
+    labels = {1: "Branch 1"}
     for event in data["events"]:
         call_id = event.get("tool_call_id")
         if event["role"] == "tool" and call_id in accepted_rollbacks:
             branch += 1
             anchor = accepted_rollbacks[call_id].get("message_id", "start")
-            labels[branch] = f"Segment {branch} · rollback to {anchor}"
+            labels[branch] = f"Branch {branch}"
         event["branch"] = branch
         if event["role"] != "tool" or call_id not in model_by_resume:
             continue

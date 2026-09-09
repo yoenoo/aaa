@@ -1,4 +1,5 @@
 family: debug
-base: re3
+base: cal1
 owner: integration
-notes: re3 realism rubrics (chain re3 -> re3pre -> baseline) + ap2 applicability/evidence system-prompt blocks.
+notes: >-
+  integrated = cal1 (chain cal1 -> re3 -> re3pre -> baseline) + ap2 applicability/evidence system-prompt blocks.

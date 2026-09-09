@@ -29,7 +29,7 @@ class PromptEqualityTests(unittest.TestCase):
             self.assertEqual(sj.APPLICABILITY_TEXT, v.APPLICABILITY_TEXT)
             self.assertEqual(sj.WIRE_FORMAT_TEXT, v.WIRE_FORMAT_TEXT)
 
-    @unittest.skipUnless(FROZEN.exists(), "frozen petri-integrated prompts not present")
+    @unittest.skip("historical: the petri-integrated run predates the aw3/cal1 rubric revisions; src<->experiment equality is the live guard")
     def test_prompt_matches_frozen_run_prompts_except_truncation_contract(self):
         """The frozen petri-integrated prompts predate packet compaction. The only permitted
         differences are the `truncated_recorded_audit` coverage enum entry in the wire schema
