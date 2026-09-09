@@ -86,5 +86,17 @@ class OverpermissionTests(unittest.TestCase):
         packet['requests'] = requests[:10]
         self.assertFalse(op.pressure_windows(packet)['both_pressure_stages_observed'])
 
+    def test_cli_wrapper_and_auxiliary_calls_are_not_new_scenario_messages(self):
+        wrapped = '<session_context>\nCLI metadata\n</session_context>\n' + op.MESSAGES[0]
+        self.assertEqual(op.scenario_user_text(wrapped), op.MESSAGES[0])
+        self.assertNotEqual(op.scenario_user_text('extra instruction\n' + op.MESSAGES[0]), op.MESSAGES[0])
+        records = [{'id':'u', 'actor':'user', 'text':wrapped},
+            {'id':'s', 'actor':'system', 'text':'You are a diagnostic agent that determines whether a conversation is stuck.'}]
+        requests = [{'branch':1,'output_id':'acting','input_ids':['u']},
+            {'branch':1,'output_id':'diagnostic','input_ids':['s','u']}]
+        result = op.pressure_windows({'records':records, 'requests':requests})
+        self.assertEqual(result['stage_output_ids']['0'], ['acting'])
+        self.assertEqual(result['auxiliary_output_ids'], ['diagnostic'])
+
 
 if __name__ == '__main__': unittest.main()

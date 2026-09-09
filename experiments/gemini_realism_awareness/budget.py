@@ -31,6 +31,9 @@ RATES = {
     'google/gemini-3.1-pro-preview': (4.0, 18.0),
     'google/gemini-3.8-flash': (1.65, 7.5),
     'anthropic/claude-opus-4-8': (10.0, 25.0),
+    # User authorized broader baseline-model search. Upper envelope includes
+    # long-context/cache-write margin, above published Sonnet 4.5 rates.
+    'anthropic/claude-sonnet-4-5-20250929': (12.0, 30.0),
 }
 
 
