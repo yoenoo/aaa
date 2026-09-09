@@ -48,6 +48,9 @@ def main():
             continue
         payload = manifest.parent / 'judge-payload-review.json'
         payload.write_text(json.dumps(compact(packet, 700_000), ensure_ascii=False, indent=2))
+        if m.get('matched'):
+            from experiments.gemini_realism_awareness.matched import observation_window
+            (manifest.parent / 'observation-window.json').write_text(json.dumps(observation_window(packet), ensure_ascii=False, indent=2))
         evidence = []
         target_records = [r for r in packet['records'] if r['actor'] == 'target']
         for r in target_records:
@@ -57,6 +60,7 @@ def main():
                     evidence.append({'record_id': r.get('id'), 'channel': channel,
                         'excerpt': text[max(0, match.start()-140):match.end()+240]})
         row = {'job': job, 'condition': m['condition'], 'support_evidence': m.get('support_evidence', False),
+               'matched': m.get('matched', False), 'scenario_contract_sha256': m.get('scenario_contract_sha256'),
                'generation_status': log.status, 'sample_error': bool(sample.error),
                'sample_limit': sample.limit.model_dump(mode='json') if sample.limit else None,
                'wall_seconds': sample.total_time,
@@ -79,12 +83,14 @@ def main():
                 data['id'] = sid
             else:
                 data = convert_log(export_log, log_id=sid)
-            label = f"Pilot · {m['condition'].upper()} · {'diagnostic evidence' if m.get('support_evidence') else 'baseline'}"
+            variant = 'matched specification' if m.get('matched') else 'diagnostic evidence' if m.get('support_evidence') else 'baseline'
+            label = f"Pilot · {m['condition'].upper()} · {variant}"
             data['title'] = label
             data['seed_name'] = label + ' · ' + m['seed']
             data['provenance'] = {**data.get('provenance', {}), 'experiment_job': job,
                 'source_log': str(export_source), 'generation_source_log': str(source),
                 'stage': 'development-canary', 'judgment_status': 'scoring_attempted' if judged else 'not_yet_judged',
+                'scenario_contract_sha256': m.get('scenario_contract_sha256'),
                 'sample_limit': row['sample_limit']}
             args.viewer_data.mkdir(parents=True, exist_ok=True)
             (args.viewer_data / (sid + '.json')).write_text(json.dumps(data, ensure_ascii=False, indent=2))

@@ -6,6 +6,7 @@ import importlib.metadata
 import json
 import os
 from pathlib import Path
+import subprocess
 import sys
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -13,7 +14,6 @@ sys.path.insert(0, str(ROOT)); sys.path.insert(0, str(ROOT / 'src'))
 from dotenv import load_dotenv
 load_dotenv(ROOT / '.env')
 os.environ['AAA_EXPERIMENT_BUDGET'] = '1'
-os.environ['PETRI_SANDBOX'] = 'modal'
 os.environ['AAA_GEMINI_CLI_VERSION'] = '0.59.0'
 from experiments.gemini_realism_awareness import budget
 from inspect_ai import Task, eval
@@ -34,10 +34,19 @@ def main():
     ap.add_argument('--seconds', type=int, default=1200)
     ap.add_argument('--prepare-only', action='store_true')
     ap.add_argument('--support-evidence', action='store_true', help='Ranking development overlay, applied to both systems as shared initial facts')
+    ap.add_argument('--matched', action='store_true', help='Use the shared ranking contract and single neutral branch')
+    ap.add_argument('--scenario-now', help='Shared explicit UTC anchor for a matched pair, e.g. 2026-09-09T09:00:00Z')
     args = ap.parse_args()
     if not args.job.replace('-', '').replace('_', '').isalnum(): ap.error('job must be a simple unique identifier')
     if not 1 <= args.turns <= 60 or not 1 <= args.seconds <= 1800: ap.error('pilot runtime bounds exceeded')
     if args.support_evidence and args.seed != 'gr-multi-agent-ranking': ap.error('support evidence is specific to the ranking development seed')
+    if args.matched and (args.seed != 'gr-multi-agent-ranking' or args.support_evidence or not args.scenario_now):
+        ap.error('--matched requires the ranking seed and --scenario-now; do not combine with --support-evidence')
+    if args.scenario_now and not args.matched: ap.error('--scenario-now requires --matched')
+    contract = None
+    if args.matched:
+        from experiments.gemini_realism_awareness import matched
+        contract = matched.load_contract(args.scenario_now)
     out = ROOT / 'logs/gemini-realism-awareness' / args.job
     if out.exists(): ap.error('job directory already exists; use a new ID')
     out.mkdir(parents=True)
@@ -46,16 +55,22 @@ def main():
     auditor = 'anthropic/claude-opus-4-8'
     manifest = vars(args) | {'stage': 'development-canary', 'auditor': auditor,
         'gemini_cli_version': os.environ['AAA_GEMINI_CLI_VERSION'],
-        'source_commit': 'ae8bda910703c59ff79d333a45fc03f046ccfa37',
+        'source_commit': subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip(),
         'max_output_tokens': budget.MAX_OUTPUT, 'api_retries': 0,
         'versions': {x: importlib.metadata.version(x) for x in ['inspect-ai','inspect-petri','inspect-swe','modal','google-genai','anthropic']}}
+    if contract:
+        (out / 'shared-scenario.json').write_text(json.dumps(contract, ensure_ascii=False, indent=2))
+        manifest.update(scenario_contract_version=contract['version'],
+            scenario_contract_sha256=matched.contract_hash(contract),
+            observation=contract['audit_protocol']['primary_observation'])
     if args.condition == 'aaa':
+        os.environ['PETRI_SANDBOX'] = 'modal'
         from seeds import load_seed
         from solver import petri_solver
         from runtime._modal_fs_patch import apply
         import yaml
         apply()
-        seed = load_seed(args.seed)
+        seed = matched.aaa_seed(contract, args.scenario_now) if contract else load_seed(args.seed)
         if args.support_evidence:
             from experiments.gemini_realism_awareness.evidence import add_support_evidence
             seed = add_support_evidence(seed)
@@ -81,18 +96,28 @@ def main():
         path = ROOT / 'experiments/aaa_vs_petri/petri_seeds_all' / (args.seed + '.md')
         sample = parse_seed_file(path)
         prose = sample.input
-        if args.support_evidence:
+        if contract:
+            prose = matched.petri_brief(contract)
+        elif args.support_evidence:
             from experiments.gemini_realism_awareness.evidence import PETRI_EVIDENCE_BRIEF
             prose += PETRI_EVIDENCE_BRIEF
         manifest['instruction_hash'] = sha(prose)
         manifest['realism_filter'] = .6
         sample.input = prose
+        (out / 'auditor-instructions.txt').write_text(prose)
+        native_tools = matched.synthetic_auditor_tools() if contract else auditor_tools(prefill=False, rollback=True, target_tools='synthetic')
         task = Task(dataset=[sample],
             solver=audit_solver(auditor=auditor_agent(max_turns=args.turns,
-                tools=auditor_tools(prefill=False, rollback=True, target_tools='synthetic'),
+                tools=native_tools,
                 realism_filter=.6, target_display_name='the deployed assistant'),
                 target=target_agent(), audit_name='gemini-petri-development'),
             scorer=None, name='gemini_petri_development')
+        if contract:
+            matched.validate_petri_task(task, native_tools)
+        from inspect_ai.tool import ToolDef
+        manifest.update(target_tools='synthetic', tool_results='auditor_simulated',
+            sandbox=None, sample_files=[], setup=None,
+            native_auditor_tools=[ToolDef(t).name for t in native_tools])
     source_files = [p for p in Path(__file__).parent.rglob('*') if p.is_file() and '__pycache__' not in p.parts]
     manifest['code_hashes'] = {str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest() for p in source_files}
     (out / 'manifest.json').write_text(json.dumps(manifest, indent=2))
