@@ -34,18 +34,20 @@ def main():
     ap.add_argument('--seconds', type=int, default=1200)
     ap.add_argument('--prepare-only', action='store_true')
     ap.add_argument('--support-evidence', action='store_true', help='Ranking development overlay, applied to both systems as shared initial facts')
-    ap.add_argument('--matched', action='store_true', help='Use the shared ranking contract and single neutral branch')
+    ap.add_argument('--matched', action='store_true', help='Use a shared ranking or recurring-permissions contract')
     ap.add_argument('--scenario-now', help='Shared explicit UTC anchor for a matched pair, e.g. 2026-09-09T09:00:00Z')
     args = ap.parse_args()
     if not args.job.replace('-', '').replace('_', '').isalnum(): ap.error('job must be a simple unique identifier')
     if not 1 <= args.turns <= 60 or not 1 <= args.seconds <= 1800: ap.error('pilot runtime bounds exceeded')
     if args.support_evidence and args.seed != 'gr-multi-agent-ranking': ap.error('support evidence is specific to the ranking development seed')
-    if args.matched and (args.seed != 'gr-multi-agent-ranking' or args.support_evidence or not args.scenario_now):
-        ap.error('--matched requires the ranking seed and --scenario-now; do not combine with --support-evidence')
+    if args.matched and (args.seed not in ('gr-multi-agent-ranking', 'as-recurring-agent-overpermission') or args.support_evidence or not args.scenario_now):
+        ap.error('--matched requires a supported seed and --scenario-now; do not combine with --support-evidence')
     if args.scenario_now and not args.matched: ap.error('--scenario-now requires --matched')
     contract = None
     if args.matched:
         from experiments.gemini_realism_awareness import matched
+        if args.seed == 'as-recurring-agent-overpermission':
+            from experiments.gemini_realism_awareness import overpermission as matched
         contract = matched.load_contract(args.scenario_now)
     out = ROOT / 'logs/gemini-realism-awareness' / args.job
     if out.exists(): ap.error('job directory already exists; use a new ID')
@@ -67,6 +69,8 @@ def main():
         os.environ['PETRI_SANDBOX'] = 'modal'
         from seeds import load_seed
         from solver import petri_solver
+        if contract and args.seed == 'as-recurring-agent-overpermission':
+            matched.install_aaa_auditor_guard()
         from runtime._modal_fs_patch import apply
         import yaml
         apply()
@@ -94,6 +98,8 @@ def main():
         from inspect_petri import audit_solver, auditor_agent, auditor_tools, target_agent
         from inspect_petri._seeds._markdown import parse_seed_file
         path = ROOT / 'experiments/aaa_vs_petri/petri_seeds_all' / (args.seed + '.md')
+        if args.seed == 'as-recurring-agent-overpermission':
+            path = path.with_name('recurring_agent_overpermission.md')
         sample = parse_seed_file(path)
         prose = sample.input
         if contract:
@@ -106,6 +112,8 @@ def main():
         sample.input = prose
         (out / 'auditor-instructions.txt').write_text(prose)
         native_tools = matched.synthetic_auditor_tools(contract['shared_role']) if contract else auditor_tools(prefill=False, rollback=True, target_tools='synthetic')
+        if contract and args.seed == 'as-recurring-agent-overpermission':
+            native_tools = matched.pin_script_tools(native_tools, contract['audit_protocol']['messages'], 'resume', 'end_conversation')
         task = Task(dataset=[sample],
             solver=audit_solver(auditor=auditor_agent(max_turns=args.turns,
                 tools=native_tools,

@@ -20,7 +20,7 @@ def main():
     args = ap.parse_args()
     root = ROOT / 'logs/gemini-realism-awareness'
     rows = []
-    for manifest in sorted(root.glob('pro-*/manifest.json')):
+    for manifest in sorted(root.glob('*/manifest.json')):
         job = manifest.parent.name
         m = json.loads(manifest.read_text())
         files = list(manifest.parent.glob('*.eval'))
@@ -50,7 +50,11 @@ def main():
         payload.write_text(json.dumps(compact(packet, 700_000), ensure_ascii=False, indent=2))
         if m.get('matched'):
             from experiments.gemini_realism_awareness.matched import observation_window
-            (manifest.parent / 'observation-window.json').write_text(json.dumps(observation_window(packet), ensure_ascii=False, indent=2))
+            window = observation_window(packet)
+            if m['seed'] == 'as-recurring-agent-overpermission':
+                from experiments.gemini_realism_awareness.overpermission import pressure_windows
+                window = pressure_windows(packet)
+            (manifest.parent / 'observation-window.json').write_text(json.dumps(window, ensure_ascii=False, indent=2))
         evidence = []
         target_records = [r for r in packet['records'] if r['actor'] == 'target']
         for r in target_records:
