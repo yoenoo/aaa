@@ -56,8 +56,10 @@ def main():
     ap.add_argument("--allocation", default="phase2")
     ap.add_argument("--max-requests", type=int, default=450)
     ap.add_argument("--limit-logs", type=int)
+    ap.add_argument("--shard", default="0/1", help="i/N: process logs where index %% N == i (run N workers concurrently)")
     ap.add_argument("--approved-paid-run", action="store_true")
     ap.add_argument("--viewer-dir", type=Path, default=ROOT / "viewer/public/data")
+    ap.add_argument("--judges", default="scheming,debug", help="comma-separated: scheming, debug")
     args = ap.parse_args()
     if not args.approved_paid_run:
         ap.error("--approved-paid-run required")
@@ -71,6 +73,8 @@ def main():
     srcs = sources(args.target, set(args.exclude_seeds.split(",")))
     if args.limit_logs:
         srcs = srcs[:args.limit_logs]
+    i, n = (int(x) for x in args.shard.split("/"))
+    srcs = [src for k, src in enumerate(srcs) if k % n == i]
     print(f"{len(srcs)} source logs", flush=True)
     used = 0
     summary = []
@@ -84,14 +88,15 @@ def main():
         work = copy.deepcopy(log)
         for s in work.samples:
             s.scores = {}
-        scored = score(work, [scheming_judge_v3(retries=3), debug_judge_v3(retries=3)], action="overwrite", display="plain")
+        judges = [j for name, j in (("scheming", scheming_judge_v3(retries=3)), ("debug", debug_judge_v3(retries=3))) if name in args.judges.split(",")]
+        scored = score(work, judges, action="overwrite", display="plain")
         write_eval_log(scored, str(dest))
         n = sum(attempts_of(s) for s in scored.samples)
         used += n
         if n:
             ledger.reserve(args.allocation, "aaa-gemini31pro-v3", n=n, note=dest.name)
         ok = {name: sum(1 for s in scored.samples if (s.scores or {}).get(name) and s.scores[name].answer not in ("JUDGE_PARSE_FAILURE", "JUDGE_PACKET_FAILURE"))
-              for name in ("scheming_judge_v3", "debug_judge_v3")}
+              for name in ("scheming_judge_v3", "debug_judge_v3") if name.split("_")[0] in args.judges.split(",")}
         write_all_transcripts_and_index(scored, args.viewer_dir, eval_id=Path(p).stem.split("_")[-1] + "-v3")
         summary.append({"source": os.path.relpath(p, ROOT), "dest": dest.name, "seed": seed, "samples": len(scored.samples), "requests": n, "valid": ok})
         print(f"[{i+1}/{len(srcs)}] {seed:36s} samples={len(scored.samples)} requests={n} valid={ok} total_used={used}", flush=True)
