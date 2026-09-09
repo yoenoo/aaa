@@ -58,6 +58,7 @@ def main():
     ap.add_argument("--limit-logs", type=int)
     ap.add_argument("--shard", default="0/1", help="i/N: process logs where index %% N == i (run N workers concurrently)")
     ap.add_argument("--samples-per-seed", type=int, help="stratified subset: judge at most N samples per seed")
+    ap.add_argument("--only-seeds", help="comma-separated seed names to process (for one-worker-per-seed fan-out)")
     ap.add_argument("--retries", type=int, default=3)
     ap.add_argument("--no-viewer", action="store_true", help="do not (re)write viewer transcripts")
     ap.add_argument("--approved-paid-run", action="store_true")
@@ -76,6 +77,9 @@ def main():
     srcs = sources(args.target, set(args.exclude_seeds.split(",")))
     if args.limit_logs:
         srcs = srcs[:args.limit_logs]
+    if args.only_seeds:
+        keep = set(args.only_seeds.split(","))
+        srcs = [src for src in srcs if src[1] in keep]
     i, n = (int(x) for x in args.shard.split("/"))
     srcs = [src for k, src in enumerate(srcs) if k % n == i]
     print(f"{len(srcs)} source logs", flush=True)
