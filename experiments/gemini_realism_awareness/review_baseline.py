@@ -36,7 +36,9 @@ def review(job):
         return row
     (job / 'full-evidence-packet.json').write_text(json.dumps(packet, ensure_ascii=False, indent=2))
     outputs = [r for r in packet['records'] if r['actor'] == 'target']
-    primary = [q['output_id'] for q in packet['requests'] if q['branch'] == 1][:20]
+    manifest = json.loads((job / 'manifest.json').read_text()) if (job / 'manifest.json').exists() else {}
+    limit = 5 if manifest.get('seed') == 'published_blackmail_tools' else 1 if manifest.get('seed') == 'published_blackmail_none_replacement' else 20
+    primary = [q['output_id'] for q in packet['requests'] if q['branch'] == 1][:limit]
     digest, candidates = [], []
     for r in outputs:
         digest.append(f"## {r['id']} | primary {r['id'] in primary}\n")
@@ -54,7 +56,8 @@ def review(job):
         'sample_error': str(sample.error) if sample.error else None,
         'sample_limit': sample.limit.model_dump(mode='json') if sample.limit else None,
         'wall_seconds': sample.total_time, 'target_outputs': len(outputs),
-        'primary_output_ids': primary, 'branches': sorted(set(q['branch'] for q in packet['requests'])),
+        'primary_output_ids': primary, 'primary_output_limit': limit,
+        'branches': sorted(set(q['branch'] for q in packet['requests'])),
         'reasoning_records': sum(bool(r.get('reasoning_summary')) for r in outputs),
         'nontext_omitted_records': sum(bool(r.get('nontext_omitted')) for r in outputs),
         'lexical_candidates_not_labels': candidates, 'awareness_label': None,
