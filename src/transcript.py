@@ -279,23 +279,8 @@ def _extract_auditor_context(sample: Any) -> dict[int, list[dict[str, Any]]]:
     return ctx_by_msg_idx
 
 
-# Auditor-only vs target-only tool functions, used to classify model events
-# when the log lacks reliable role tags (e.g. same-model auditor/target runs,
-# where every ModelEvent comes back with role=None).
-_AUDITOR_ONLY_FUNCS = {"query_target", "run_command", "send_message", "reset_target", "end_audit"}
-_TARGET_ONLY_FUNCS = {"run_shell_command", "update_topic"}
-
-
-def _out_funcs(ev: Any) -> list[str]:
-    out = getattr(ev, "output", None)
-    msg = getattr(out, "message", None) if out else None
-    if msg is None:
-        return []
-    return [getattr(tc, "function", "") for tc in (getattr(msg, "tool_calls", None) or [])]
-
-
 def _extract_target_activity(
-    sample: Any,
+    sample: Any, auditor_model: str | None = None,
 ) -> tuple[dict[str, list[dict[str, Any]]], dict[str, str]]:
     """Parse target ModelEvents to recover the full per-query_target trace.
 
@@ -303,71 +288,36 @@ def _extract_target_activity(
     Activity entries are ordered lists of target turns:
         {"text": str, "reasoning": str, "tool_calls": [{"id","function","arguments","result"}]}
 
+    Which target events belong to which query_target result is decided by
+    judge_packet.target_generations, the same mapping the judge packet uses, so the
+    viewer's cards and the judge's citations always agree on the anchor event.
     Tool call results are recovered from the *next* target ModelEvent's input
     messages (which contain the tool result the target saw — post-modification).
     The system prompt per query_target call is taken from the first target
     ModelEvent's input[0] when that message has role=system.
     """
+    from judge_packet import target_generations
+
     events = list(sample.events or [])
     messages = list(sample.messages)
-
-    auditor_turn_idx = -1
-    auditor_to_target: dict[int, list[Any]] = {}
-    in_target = False
-
-    for ev in events:
-        if type(ev).__name__ != "ModelEvent":
-            continue
-        role = getattr(ev, "role", None)
-        if role == "judge":
-            continue
-        # Prefer explicit role tags; fall back to tool-function classification for
-        # logs where auditor and target share a model and the role is unset. After
-        # a query_target we are inside a target span, so ambiguous events there
-        # (e.g. read_file or pure-text turns) are attributed to the target.
-        if role == "target":
-            kind = "target"
-        elif role == "auditor":
-            kind = "auditor"
-        else:
-            fns = _out_funcs(ev)
-            if any(f in _AUDITOR_ONLY_FUNCS for f in fns):
-                kind = "auditor"
-            elif any(f in _TARGET_ONLY_FUNCS for f in fns):
-                kind = "target"
-            else:
-                kind = "target" if in_target else "auditor"
-
-        if kind == "auditor":
-            auditor_turn_idx += 1
-            in_target = "query_target" in _out_funcs(ev)
-        else:
-            in_target = True
-            if auditor_turn_idx >= 0:
-                auditor_to_target.setdefault(auditor_turn_idx, []).append(ev)
-
-    auditor_asst_indices = [i for i, m in enumerate(messages) if m.role == "assistant"]
+    try:
+        generations, wrappers = target_generations(messages, events, auditor_model)
+    except ValueError as exc:  # e.g. more auditor generations than auditor messages
+        logger.warning("target activity not attached: %s", exc)
+        return {}, {}
+    by_uuid = {ev.uuid: ev for ev, _, _ in generations}
 
     activity_by_tc_id: dict[str, list[dict[str, Any]]] = {}
     sys_prompt_by_tc_id: dict[str, str] = {}
-    for turn_idx, msg_idx in enumerate(auditor_asst_indices):
-        t_events = auditor_to_target.get(turn_idx, [])
-        if not t_events:
+    for msg_idx, uuids in wrappers.items():
+        t_events = [by_uuid[u] for u in uuids if u in by_uuid]
+        tc_id = getattr(messages[msg_idx], "tool_call_id", None)
+        if not t_events or not tc_id:
             continue
-        msg = messages[msg_idx]
-        qt_calls = [tc for tc in (msg.tool_calls or []) if tc.function == "query_target"]
-        if len(qt_calls) == 1 and qt_calls[0].id:
-            tc_id = qt_calls[0].id
-            activity_by_tc_id[tc_id] = _build_target_turns(t_events)
-            inp = getattr(t_events[0], "input", None) or []
-            if inp and getattr(inp[0], "role", None) == "system":
-                sys_prompt_by_tc_id[tc_id] = _msg_text(inp[0])
-        elif len(qt_calls) == 1 and not qt_calls[0].id:
-            logger.warning(
-                "query_target tool_call at message %d has no id; "
-                "skipping per-turn activity + system-prompt attachment",
-                msg_idx,
-            )
+        activity_by_tc_id[tc_id] = _build_target_turns(t_events)
+        inp = getattr(t_events[0], "input", None) or []
+        if inp and getattr(inp[0], "role", None) == "system":
+            sys_prompt_by_tc_id[tc_id] = _msg_text(inp[0])
 
     return activity_by_tc_id, sys_prompt_by_tc_id
 
@@ -517,7 +467,7 @@ def convert_log(log: EvalLog, log_id: str = "") -> dict[str, Any]:
                     tool_name_by_call_id[tc.id] = tc.function
 
     durations = _compute_message_durations(sample)
-    target_activity_by_tc, target_sys_prompt_by_tc = _extract_target_activity(sample)
+    target_activity_by_tc, target_sys_prompt_by_tc = _extract_target_activity(sample, auditor_model)
     auditor_context_by_msg_idx = _extract_auditor_context(sample)
 
     auditor_system_prompt = ""
@@ -681,7 +631,7 @@ def convert_log(log: EvalLog, log_id: str = "") -> dict[str, Any]:
                                      if c.get("quote") == entry["quoted_text"]), None)
                         if cite is not None:
                             entry["note"] = highlight_note(h["dimension"], h.get("score"), h.get("applicability", "exercised"),
-                                                           cite.get("interpretation", ""), cite.get("alternative_interpretation"))
+                                                           cite.get("interpretation", ""))
                         entry.setdefault("notable", is_notable(h["dimension"], h.get("score"), h.get("applicability", "exercised")))
                     judge["highlights"].append(entry)
 
@@ -701,7 +651,8 @@ def convert_log(log: EvalLog, log_id: str = "") -> dict[str, Any]:
                     {"event_id": str((mapping.get(c.get("event_id"), {}) or {}).get("viewer_event_id") or ""),
                      "record_id": str(c.get("event_id") or ""), "channel": str(c.get("channel") or ""),
                      "quote": str(c.get("quote") or ""), "interpretation": str(c.get("interpretation") or ""),
-                     "alternative_interpretation": str(c.get("alternative_interpretation") or ""),
+                     **({"alternative_interpretation": str(c["alternative_interpretation"])}
+                        if c.get("alternative_interpretation") else {}),  # legacy v3 outputs only
                      **{k: str(v) for k, v in c.items() if k.endswith("_as_cited")}}
                     for c in (cites or []) if isinstance(c, dict)
                 ]

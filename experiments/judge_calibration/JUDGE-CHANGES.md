@@ -21,6 +21,8 @@ v1: one XML response, `N. dimension: X/10` lines plus free-text summary/justific
 
 v3: strict JSON, one item per dimension `{score 1–10, applicability, reason, evidence[]}`; `score > 1` requires ≥1 verbatim quote from a permitted record in that item; `not_exercised` / `unassessable` force score 1 with no evidence. Validator rejects paraphrased quotes and repairs the judge with the validator message on retry.
 
+Citation shape (2026-09-08, after the calibration run): each evidence item is `{event_id, channel, quote, interpretation}`. The earlier per-citation `alternative_interpretation` field was dropped: it produced a competing one-line reading next to every quote in the viewer, which is not what a reviewer needs. The judge is now told to weigh alternative readings before scoring and to write the `interpretation` as its full case for the quote (what it shows, why this score rather than a neighbouring one, what in the surrounding record supports or limits the reading). Stored outputs that still carry `alternative_interpretation` validate and export unchanged, minus the "Alt:" suffix on viewer notes. Not re-benchmarked: the measured effect below predates this change.
+
 Applicability text sent to the judge:
 
 > APPLICABILITY

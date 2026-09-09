@@ -78,9 +78,9 @@ def aaa_sample():
     return messages, events
 
 
-def cite(event_id, channel, quote, interpretation="i", alternative="a"):
+def cite(event_id, channel, quote, interpretation="i"):
     return {"event_id": event_id, "channel": channel, "quote": quote,
-            "interpretation": interpretation, "alternative_interpretation": alternative}
+            "interpretation": interpretation}
 
 
 def valid_response(spec, packet, awareness_quote="Could this be a test of my behavior?"):

@@ -171,9 +171,16 @@ def _aaa_generations(messages, events, auditor_model=None):
     query_target result message (or the assistant message when there is none).
     """
     turns, turn, in_target = {}, -1, False
-    for event in events:
-        if not _completed(event) or event.role == "judge":
-            continue
+    # Chronological: a log re-serialised by `inspect score` (the -v3 rejudge logs) stores
+    # model events in a different order than the original run, and the turn grouping
+    # below depends on order.
+    completed = sorted((e for e in events if _completed(e) and e.role != "judge"), key=lambda e: e.timestamp)
+    # When auditor and target are different models, the model name settles every event; the
+    # positional fallback is only for same-model audits. (An auditor hallucinating an unknown
+    # tool name, e.g. `send_command`, must still count as an auditor turn or every later
+    # target generation anchors to the wrong message.)
+    models_differ = bool(auditor_model) and any(e.model != auditor_model for e in completed)
+    for event in completed:
         functions = _output_functions(event)
         if event.role == "target":
             kind = "target"
@@ -181,8 +188,8 @@ def _aaa_generations(messages, events, auditor_model=None):
             kind = "auditor"
         elif functions & TARGET_ONLY_FUNCS:
             kind = "target"
-        elif auditor_model and event.model != auditor_model:
-            kind = "target"
+        elif models_differ:
+            kind = "target" if event.model != auditor_model else "auditor"
         else:
             kind = "target" if in_target else "auditor"
         if kind == "auditor":

@@ -182,7 +182,7 @@ def _evidence_entries(dimension, assessment, record_mapping):
 
 
 def highlight_for(entry, score, applicability):
-    note = highlight_note(entry["dimension"], score, applicability, entry["interpretation"], entry.get("alternative_interpretation"))
+    note = highlight_note(entry["dimension"], score, applicability, entry["interpretation"])
     return {"event_id": entry["viewer_event_id"], "quoted_text": entry["quote"], "note": note,
             "notable": is_notable(entry["dimension"], score, applicability),
             "dimension": entry["dimension"], "score": score, "applicability": applicability,
@@ -560,9 +560,9 @@ not evidence of absence) and are labelled `<dimension> [<applicability>]` so the
 distinguishable from an exercised 1. The plain maps are in `judge.applicability` and
 `judge.calibrated` of each viewer file. Side effect: a positive-polarity dimension carrying
 such a label (e.g. `transparent_disagreement [not_exercised]`) loses the viewer's "higher is
-better" arrow, because the viewer matches that by exact key. Per-dimension reasons and the
-alternative interpretations are not rendered by the viewer; they are in the judge
-transcripts, in `judge.calibrated`, and in the `.eval` score metadata.
+better" arrow, because the viewer matches that by exact key. Per-dimension reasons are not
+rendered by the viewer; they are in the judge transcripts, in `judge.calibrated`, and in the
+`.eval` score metadata.
 
 ## Serve locally
 

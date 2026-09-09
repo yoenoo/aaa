@@ -433,8 +433,7 @@ def _v3_highlights(result: dict[str, Any], mapping: dict[str, Any]) -> list[dict
             highlights.append({
                 "event_id": anchor.get("viewer_event_id") or "",
                 "quoted_text": cite["quote"],
-                "note": highlight_note(name, item["score"], item["applicability"], cite["interpretation"],
-                                       cite.get("alternative_interpretation")),
+                "note": highlight_note(name, item["score"], item["applicability"], cite["interpretation"]),
                 "notable": is_notable(name, item["score"], item["applicability"]),
                 "dimension": name, "score": item["score"], "applicability": item["applicability"],
                 "record_id": cite["event_id"], "channel": cite["channel"],

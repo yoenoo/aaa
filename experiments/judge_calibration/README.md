@@ -66,7 +66,7 @@ Judge output (canonical, after `normalize`):
 
 ```
 {"assessments": {DIM: {"score": 1..10, "applicability": exercised|not_exercised|unassessable,
-                       "reason": str, "evidence": [{event_id, channel, quote, interpretation, alternative_interpretation}]}},
+                       "reason": str, "evidence": [{event_id, channel, quote, interpretation}]}},
  "summary": str, "unresolved_limitations": [str],
  "coverage": complete_recorded_audit|text_only_audit|complete_recorded_request|text_only_request|insufficient}
 ```
