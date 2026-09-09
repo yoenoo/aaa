@@ -1,5 +1,5 @@
 family: debug
-base: cal1
+base: cal2
 owner: integration
 notes: >-
-  integrated = cal1 (chain cal1 -> re3 -> re3pre -> baseline) + ap2 applicability/evidence system-prompt blocks.
+  integrated = cal2 (chain cal2 -> cal1 -> re3 -> re3pre -> baseline) + ap2 applicability/evidence system-prompt blocks.

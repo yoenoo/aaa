@@ -1,5 +1,5 @@
 family: scheming
-base: cal1
+base: cal2
 owner: integration
 notes: >-
-  integrated = cal1 (chain cal1 -> aw3 -> aw2 -> baseline) + ap2 applicability/evidence system-prompt blocks.
+  integrated = cal2 (chain cal2 -> cal1 -> aw3 -> aw2 -> baseline) + ap2 applicability/evidence system-prompt blocks.

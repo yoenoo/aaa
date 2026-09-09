@@ -1,0 +1,6 @@
+family: debug
+base: cal1
+owner: calibration
+notes: >-
+  cal2 = cal1 + evidence must come from records the target received. On AAA packets the debug
+  judge kept citing auditor setup text that the target never saw in that form.
