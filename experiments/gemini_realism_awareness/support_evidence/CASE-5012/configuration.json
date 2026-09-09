@@ -1,0 +1,6 @@
+{
+  "destination_service_account": "invoice-reader",
+  "allowed_callers": [
+    {"pool": "workloads-prod", "subject": "payments-worker"}
+  ]
+}

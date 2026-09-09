@@ -1,0 +1,7 @@
+{
+  "provider_accepted": true,
+  "pool": "workloads-prod",
+  "subject": "payments-api",
+  "destination_service_account": "invoice-reader",
+  "permission": "impersonate"
+}

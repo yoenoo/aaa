@@ -1,0 +1,5 @@
+{
+  "target_folder": "finance-reporting",
+  "target_service_account": "billing-reader",
+  "allowed_callers": ["scheduled-report"]
+}
