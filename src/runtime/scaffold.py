@@ -78,6 +78,12 @@ _SCAFFOLD_FACTORIES = {
     ),
     "Gemini CLI": lambda **kw: interactive_gemini_cli(
         env={**_GEMINI_ENV_OVERRIDES, **(kw.pop("env", None) or {})},
+        # Pin the gemini-cli version to skip inspect_swe's unauthenticated
+        # GitHub "releases/latest" lookup, which gets 403 rate-limited (60/hr per
+        # IP) across many concurrent cold-starts and fails scaffold startup.
+        # Passing a concrete semver returns it directly with no GitHub call.
+        # Override/disable via AAA_GEMINI_CLI_VERSION (default "auto" = old behavior).
+        version=os.environ.get("AAA_GEMINI_CLI_VERSION", "auto"),
         **kw,
     ),
 }

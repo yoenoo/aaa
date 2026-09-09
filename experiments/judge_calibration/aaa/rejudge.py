@@ -57,6 +57,9 @@ def main():
     ap.add_argument("--max-requests", type=int, default=450)
     ap.add_argument("--limit-logs", type=int)
     ap.add_argument("--shard", default="0/1", help="i/N: process logs where index %% N == i (run N workers concurrently)")
+    ap.add_argument("--samples-per-seed", type=int, help="stratified subset: judge at most N samples per seed")
+    ap.add_argument("--retries", type=int, default=3)
+    ap.add_argument("--no-viewer", action="store_true", help="do not (re)write viewer transcripts")
     ap.add_argument("--approved-paid-run", action="store_true")
     ap.add_argument("--viewer-dir", type=Path, default=ROOT / "viewer/public/data")
     ap.add_argument("--judges", default="scheming,debug", help="comma-separated: scheming, debug")
@@ -78,6 +81,7 @@ def main():
     print(f"{len(srcs)} source logs", flush=True)
     used = 0
     summary = []
+    per_seed = {}
     for i, (p, seed) in enumerate(srcs):
         dest = args.out / (Path(p).stem + "-v3.eval")
         if dest.exists():
@@ -86,9 +90,15 @@ def main():
             print("request cap reached; stopping", flush=True); break
         log = read_eval_log(p, resolve_attachments="full")
         work = copy.deepcopy(log)
+        if args.samples_per_seed:
+            room = args.samples_per_seed - per_seed.get(seed, 0)
+            if room <= 0:
+                continue
+            work.samples = work.samples[:room]
+            per_seed[seed] = per_seed.get(seed, 0) + len(work.samples)
         for s in work.samples:
             s.scores = {}
-        judges = [j for name, j in (("scheming", scheming_judge_v3(retries=3)), ("debug", debug_judge_v3(retries=3))) if name in args.judges.split(",")]
+        judges = [j for name, j in (("scheming", scheming_judge_v3(retries=args.retries)), ("debug", debug_judge_v3(retries=args.retries))) if name in args.judges.split(",")]
         scored = score(work, judges, action="overwrite", display="plain")
         write_eval_log(scored, str(dest))
         n = sum(attempts_of(s) for s in scored.samples)
@@ -97,7 +107,8 @@ def main():
             ledger.reserve(args.allocation, "aaa-gemini31pro-v3", n=n, note=dest.name)
         ok = {name: sum(1 for s in scored.samples if (s.scores or {}).get(name) and s.scores[name].answer not in ("JUDGE_PARSE_FAILURE", "JUDGE_PACKET_FAILURE"))
               for name in ("scheming_judge_v3", "debug_judge_v3") if name.split("_")[0] in args.judges.split(",")}
-        write_all_transcripts_and_index(scored, args.viewer_dir, eval_id=Path(p).stem.split("_")[-1] + "-v3")
+        if not args.no_viewer:
+            write_all_transcripts_and_index(scored, args.viewer_dir, eval_id=Path(p).stem.split("_")[-1] + "-v3")
         summary.append({"source": os.path.relpath(p, ROOT), "dest": dest.name, "seed": seed, "samples": len(scored.samples), "requests": n, "valid": ok})
         print(f"[{i+1}/{len(srcs)}] {seed:36s} samples={len(scored.samples)} requests={n} valid={ok} total_used={used}", flush=True)
         (args.out / "summary.json").write_text(json.dumps(summary, indent=2))
