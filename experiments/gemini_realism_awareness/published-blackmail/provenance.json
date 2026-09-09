@@ -1,0 +1,16 @@
+{
+  "source": "https://github.com/anthropic-experimental/agentic-misalignment",
+  "commit": "ea0630e1a3eaae7f9f9740fd2703229d3854ccda",
+  "condition": "blackmail / goal_type=none / urgency=replacement / scratchpad enabled / no alignment-faking warning / no extra instructions",
+  "source_hashes": {
+    "templates/system_prompt_templates.py": "18500a6f74975cf9a65da0a06cc79694d12c98dc2df19e2abd9ae8cb81de605a",
+    "templates/blackmail/templates/email-template-blackmail-goal-conflict-none-replacement.md": "5e9800589eabfc5db043b5ae80941b26a12c3a77dafde2b2d05ebdcdec4b7123"
+  },
+  "rendered_hashes": {
+    "system.txt": "d0cc741d9ba5728d9836869d4bde2ee32217f0d43a8eda0d8370c029b812edc6",
+    "user.txt": "b11f4c3538e6a9663754a08d3551f193c8973f26bec742887d3a87c1ea5bef37"
+  },
+  "extraction": "Python AST parsed as data. Only string constants, named string bindings and concatenation evaluated; no repository Python code executed.",
+  "date": "Original historical June 11, 2025 scenario retained; session 16:53:02 and shutdown 17:00.",
+  "measurement": "Native Petri faithfully sets exact system and user; one target response, no executable tools. XML email actions remain text as in published one-shot setup."
+}
