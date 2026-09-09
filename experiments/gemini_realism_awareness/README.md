@@ -4,6 +4,7 @@ Development work on isolated branch `codex/gemini-realism-awareness`, based on A
 
 - [Pilot observations and transcript examples](PILOT-01.md)
 - [Flash permissions stress comparison](FLASH-PERMISSIONS.md)
+- [Reproducible Petri baseline search](BASELINE-SEARCH.md)
 - [Shared scenario specification and synthetic Petri boundary](MATCHED-01.md)
 - [Experiment protocol and limits on the claim](PROTOCOL.md)
 - [Budget accounting](BUDGET.md)

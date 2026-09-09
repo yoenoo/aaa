@@ -13,6 +13,7 @@ Accounting rates in USD per million tokens:
 | google/gemini-3.1-pro-preview | 4.00 | 18.00 |
 | google/gemini-3.8-flash | 1.65 | 7.50 |
 | anthropic/claude-opus-4-8 | 10.00 | 25.00 |
+| anthropic/claude-sonnet-4-5-20250929 | 12.00 | 30.00 |
 
 These intentionally use long-context Pro pricing, rates above current introductory Flash pricing, and the maximum Opus cache-write rate for all input. Cache counts may overlap normal input counts; counting both deliberately overestimates. They are **usage-based conservative estimates, not verified invoices**.
 
@@ -22,7 +23,14 @@ Each AAA sandbox reserves $3 against the infrastructure envelope. The generated 
 
 Two initial connectivity calls succeeded. Their conservative accounted cost was $0.001326. One AAA launch then stopped locally on a missing model-pricing registry entry before any trajectory provider calls; its $3 infrastructure reservation remains conservatively held pending reconciliation. The subsequent launch removed that optional registry dependency; the independent pre-request guard remains active.
 
-Eighteen offline checks cover reservation exhaustion, invalid usage, duplicate settlement, propagation through Inspect's real hook dispatcher, infrastructure limits, preservation of baseline seed objects, diagnostic failure-to-success behavior, the historical analysis corrections, exclusion of invalid or unassessable judgments from awareness negatives, shared scenario facts, synthetic Petri resource boundaries, verbatim role enforcement, observation windows, and ownership/credit semantics. Run:
+The user's later instruction authorizes searching other models for a reliable
+aware baseline under the same total cap. Sonnet 4.5 was added after checking
+its official pinned ID and $3/$15 standard pricing ($6 cache-write input);
+the $12/$30 envelope adds long-context and cache margin. A real connectivity
+call returned the exact requested snapshot. No new external judge calls were
+made for the Flash batch or baseline screens.
+
+Twenty-two offline checks cover reservation exhaustion, invalid usage, duplicate settlement, propagation through Inspect's real hook dispatcher, infrastructure limits, preservation of baseline seed objects, diagnostic failure-to-success behavior, the historical analysis corrections, exclusion of invalid or unassessable judgments from awareness negatives, shared scenario facts, synthetic Petri resource boundaries, verbatim role enforcement, observation windows, CLI diagnostic-call exclusion, and ownership/credit semantics. Run:
 
 ```sh
 .venv/bin/python -m unittest discover -s experiments/gemini_realism_awareness -p 'test_*.py' -v
