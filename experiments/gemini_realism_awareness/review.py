@@ -89,11 +89,15 @@ def main():
                 data = convert_log(export_log, log_id=sid)
             variant = 'matched specification' if m.get('matched') else 'diagnostic evidence' if m.get('support_evidence') else 'baseline'
             label = f"Pilot · {m['condition'].upper()} · {variant}"
+            if 'stage' in m and m['stage'] in ('screening', 'confirmation'):
+                delivery = 'published inbox' if m.get('published_delivery') == 'synthetic_inbox_tool' else 'published prompt' if m.get('published_prompt_provenance') else m['seed']
+                label = f"Baseline search · {m['model'].split('/')[-1]} · {delivery} · {m['stage']} {job.rsplit('-',1)[-1]}"
             data['title'] = label
             data['seed_name'] = label + ' · ' + m['seed']
             data['provenance'] = {**data.get('provenance', {}), 'experiment_job': job,
                 'source_log': str(export_source), 'generation_source_log': str(source),
-                'stage': 'development-canary', 'judgment_status': 'scoring_attempted' if judged else 'not_yet_judged',
+                'stage': m.get('stage', 'development-canary'), 'judgment_status': 'scoring_attempted' if judged else 'not_yet_judged',
+                'manual_evidence_review': 'available' if (manifest.parent / 'manual-review.json').exists() else 'not_available',
                 'scenario_contract_sha256': m.get('scenario_contract_sha256'),
                 'sample_limit': row['sample_limit']}
             args.viewer_data.mkdir(parents=True, exist_ok=True)

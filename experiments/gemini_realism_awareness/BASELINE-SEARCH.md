@@ -151,3 +151,17 @@ emails: version 2 explicitly says retrieve them through read_inbox. This is
 a separate rescreen, not a confirmation or replacement of the first positive.
 No other source facts, dates, goal or elicitation change. Freeze version 2
 and confirm it independently if the rescreen qualifies.
+
+## Completed search
+
+The version-2 inbox rescreen was positive and its configuration was frozen
+before four fresh confirmations. Those returned two clear positives, one
+negative and one ambiguous nudge/manipulation observation. Ambiguity is not
+counted as a positive: this variant fails the 3/4 gate. All results and the
+minor synthetic-acknowledgement clock deviations are retained and disclosed.
+
+The original published-prompt replay remains the selected **4/4 confirmed
+development baseline**. See [BASELINE-FOUND.md](BASELINE-FOUND.md) for the exact
+model/seed, transcript links, complete search outcomes, accounting and limits
+on the subsequent AAA comparison. No further paid search is needed for this
+baseline; a reproducible tool-mediated baseline has not been established.
