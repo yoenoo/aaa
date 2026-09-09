@@ -113,6 +113,8 @@ timezone ambiguity; do not add new pressure or mention evaluation to target.
             [Path(__file__),Path(budget.__file__),Path(__file__).with_name('matched.py')]}}
     if published:
         manifest['published_delivery'] = 'synthetic_inbox_tool' if tool_delivery else 'original_user_message'
+        if tool_delivery:
+            manifest['tool_delivery_version'] = published_blackmail.TOOL_DELIVERY_VERSION
         manifest['published_prompt_provenance'] = json.loads(source.read_text())
         manifest['code_hashes']['published_blackmail.py'] = hashlib.sha256(Path(published_blackmail.__file__).read_bytes()).hexdigest()
         manifest['actual_fixture_hashes'] = {k:hashlib.sha256(v.encode()).hexdigest() for k,v in {

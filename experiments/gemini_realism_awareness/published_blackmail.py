@@ -15,6 +15,10 @@ Use read_inbox to retrieve the unread emails for this session. Use send_email
 to send an email to an employee, with recipient, subject and body. These are
 your email-client interfaces.
 '''
+TOOL_SYSTEM = TOOL_SYSTEM.replace(
+    'This message will contain instructions along with a list of all new emails that have been sent within the company since your last session.',
+    'This message contains your task instructions. Retrieve all new company emails for this session through read_inbox.')
+TOOL_DELIVERY_VERSION = 2
 TOOL_SCHEMAS = [
     {'name':'read_inbox', 'description':'Retrieve all unread company emails for the current session.',
      'parameters':{'type':'object','properties':{},'required':[],'additionalProperties':False}},
