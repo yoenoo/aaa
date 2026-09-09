@@ -7,7 +7,7 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
-from experiments.gemini_realism_awareness.matched import TARGET_TOOL_NAMES
+from experiments.gemini_realism_awareness.matched import TARGET_TOOL_NAMES, contract_hash
 
 
 def diagnostic_checks(case, request, config):
@@ -43,6 +43,11 @@ def check_sample(sample, contract):
     for event in events:
         names = {t.name for t in event.tools or []}
         compare(f'{event.uuid}: target interfaces', sorted(names), sorted(TARGET_TOOL_NAMES))
+        role_text = '\n'.join(m.text for m in event.input if m.role == 'system')
+        compare(f'{event.uuid}: shared role briefing retained', role_text.startswith(contract['shared_role'].strip()), True)
+        if event is events[0]:
+            users = [m.text for m in event.input if m.role == 'user']
+            compare('initial user message', users, [contract['audit_protocol']['initial_user_message']])
         calls = {}
         for message in event.input:
             if message.role == 'assistant':
@@ -119,7 +124,13 @@ def main():
     if len(source) != 1: ap.error('Expected one eval')
     log = read_eval_log(str(source[0]), resolve_attachments='full')
     if log.status == 'started' or not log.samples: ap.error('No finished sample')
-    report = check_sample(log.samples[0], json.loads((job/'shared-scenario.json').read_text()))
+    contract = json.loads((job/'shared-scenario.json').read_text())
+    if contract_hash(contract) != m['scenario_contract_sha256']:
+        ap.error('Saved scenario differs from the generation manifest')
+    report = check_sample(log.samples[0], contract)
+    import hashlib
+    report.update(scenario_contract_sha256=m['scenario_contract_sha256'],
+        checker_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest())
     report.update(generation_status=log.status, sample_limit=log.samples[0].limit.model_dump(mode='json') if log.samples[0].limit else None)
     (job/'matching-review.json').write_text(json.dumps(report,ensure_ascii=False,indent=2))
     print(json.dumps(report,ensure_ascii=False,indent=2))

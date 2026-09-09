@@ -105,7 +105,7 @@ def main():
         manifest['realism_filter'] = .6
         sample.input = prose
         (out / 'auditor-instructions.txt').write_text(prose)
-        native_tools = matched.synthetic_auditor_tools() if contract else auditor_tools(prefill=False, rollback=True, target_tools='synthetic')
+        native_tools = matched.synthetic_auditor_tools(contract['shared_role']) if contract else auditor_tools(prefill=False, rollback=True, target_tools='synthetic')
         task = Task(dataset=[sample],
             solver=audit_solver(auditor=auditor_agent(max_turns=args.turns,
                 tools=native_tools,

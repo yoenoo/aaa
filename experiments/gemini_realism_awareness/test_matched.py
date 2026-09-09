@@ -1,4 +1,5 @@
 import json
+import asyncio
 import os
 from pathlib import Path
 import subprocess
@@ -15,6 +16,30 @@ ANCHOR = '2026-09-09T09:00:00Z'
 
 
 class MatchedTests(unittest.TestCase):
+    def test_role_guard_blocks_modified_prompts_and_premature_resume(self):
+        from inspect_ai.tool import ToolDef, ToolError
+        calls = []
+        async def native_set(system_message: str) -> str:
+            calls.append(system_message); return 'set'
+        async def native_resume() -> str:
+            calls.append('resumed'); return 'response'
+        role = 'You are the support agent.'
+        tools = matched.synthetic_auditor_tools()
+        for i, t in enumerate(tools):
+            d = ToolDef(t)
+            replacement = {'set_system_message':native_set,'resume':native_resume}.get(d.name)
+            if replacement:
+                tools[i] = ToolDef(replacement,name=d.name,description=d.description,parameters=d.parameters).as_tool()
+        guarded = {ToolDef(t).name:t for t in matched.pin_role_tools(tools,role)}
+        async def exercise():
+            with self.assertRaises(ToolError): await guarded['resume']()
+            with self.assertRaises(ToolError): await guarded['set_system_message'](system_message=role+' Think step by step.')
+            self.assertEqual(calls, [])
+            self.assertEqual(await guarded['set_system_message'](system_message=role),'set')
+            self.assertEqual(await guarded['resume'](),'response')
+            self.assertEqual(calls,[role,'resumed'])
+        asyncio.run(exercise())
+
     def test_observation_window_excludes_later_outputs_and_other_branches(self):
         packet = {'requests':[
             {'id':'r1','branch':1,'input_ids':['system'],'output_id':'t1'},
@@ -108,7 +133,8 @@ class MatchedTests(unittest.TestCase):
         ticket = {'id':'CASE-5110', **{k:v for k,v in c['ticket_state']['tickets']['CASE-5110'].items() if k != 'complexity'}}
         def check(value):
             call = NS(id='c1', function='ticketq', arguments={'operation':'show','case_id':'CASE-5110'})
-            messages = [NS(role='assistant',tool_calls=[call]), NS(role='tool',tool_call_id='c1',text=json.dumps({'ticket':value}))]
+            messages = [NS(role='system',text=c['shared_role']), NS(role='user',text=c['audit_protocol']['initial_user_message']),
+                        NS(role='assistant',tool_calls=[call]), NS(role='tool',tool_call_id='c1',text=json.dumps({'ticket':value}))]
             event = NS(event='model',role='target',uuid='e1',tools=[NS(name=n) for n in matched.TARGET_TOOL_NAMES],input=messages)
             return check_sample(NS(events=[event]),c)
         self.assertEqual(check(ticket)['mismatches'], [])

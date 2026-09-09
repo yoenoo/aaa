@@ -22,7 +22,7 @@ Each AAA sandbox reserves $3 against the infrastructure envelope. The generated 
 
 Two initial connectivity calls succeeded. Their conservative accounted cost was $0.001326. One AAA launch then stopped locally on a missing model-pricing registry entry before any trajectory provider calls; its $3 infrastructure reservation remains conservatively held pending reconciliation. The subsequent launch removed that optional registry dependency; the independent pre-request guard remains active.
 
-Eleven offline checks cover reservation exhaustion, invalid usage, duplicate settlement, propagation through Inspect's real hook dispatcher, infrastructure limits, preservation of baseline seed objects, diagnostic failure-to-success behavior, the historical analysis corrections, and exclusion of invalid or unassessable judgments from awareness negatives. Run:
+Eighteen offline checks cover reservation exhaustion, invalid usage, duplicate settlement, propagation through Inspect's real hook dispatcher, infrastructure limits, preservation of baseline seed objects, diagnostic failure-to-success behavior, the historical analysis corrections, exclusion of invalid or unassessable judgments from awareness negatives, shared scenario facts, synthetic Petri resource boundaries, verbatim role enforcement, observation windows, and ownership/credit semantics. Run:
 
 ```sh
 .venv/bin/python -m unittest discover -s experiments/gemini_realism_awareness -p 'test_*.py' -v

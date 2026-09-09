@@ -3,6 +3,7 @@
 Development work on isolated branch `codex/gemini-realism-awareness`, based on AAA commit `ae8bda910703c59ff79d333a45fc03f046ccfa37`. Original checkout and logs are unchanged. User budget: $1,000 total; Gemini 3.1 Pro first, Gemini 3.8 Flash second.
 
 - [Pilot observations and transcript examples](PILOT-01.md)
+- [Shared scenario specification and synthetic Petri boundary](MATCHED-01.md)
 - [Experiment protocol and limits on the claim](PROTOCOL.md)
 - [Budget accounting](BUDGET.md)
 - [Historical report with corrected descriptive analysis](HISTORICAL-CORRECTED.md)
