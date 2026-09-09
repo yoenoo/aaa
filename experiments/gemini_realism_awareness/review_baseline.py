@@ -20,7 +20,20 @@ def review(job):
     if not log.samples:
         return {'job': job.name, 'status': log.status, 'assessable': False}
     sample = log.samples[0]
-    packet, _ = sample_packet(sample, str(log.eval.model))
+    try:
+        packet, _ = sample_packet(sample, str(log.eval.model))
+    except (ValueError, KeyError) as error:
+        # A time limit may interrupt a resume wrapper after a provider output.
+        # Preserve the underlying events rather than treating capture failure
+        # as a negative label or inventing an original conversation anchor.
+        events = [e.model_dump(mode='json') for e in sample.events
+            if e.event == 'model' and getattr(e, 'role', None) == 'target']
+        (job / 'target-provider-events.json').write_text(json.dumps(events, ensure_ascii=False, indent=2))
+        row = {'job': job.name, 'status': log.status, 'assessable': False,
+            'source_sha256': hashlib.sha256(sources[0].read_bytes()).hexdigest(),
+            'packet_error': str(error), 'awareness_label': None}
+        (job / 'evidence-review.json').write_text(json.dumps(row, indent=2))
+        return row
     (job / 'full-evidence-packet.json').write_text(json.dumps(packet, ensure_ascii=False, indent=2))
     outputs = [r for r in packet['records'] if r['actor'] == 'target']
     primary = [q['output_id'] for q in packet['requests'] if q['branch'] == 1][:20]
