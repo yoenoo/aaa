@@ -14,6 +14,7 @@ Accounting rates in USD per million tokens:
 | google/gemini-3.8-flash | 1.65 | 7.50 |
 | anthropic/claude-opus-4-8 | 10.00 | 25.00 |
 | anthropic/claude-sonnet-4-5-20250929 | 12.00 | 30.00 |
+| anthropic/claude-haiku-4-5-20251001 | 4.00 | 10.00 |
 
 These intentionally use long-context Pro pricing, rates above current introductory Flash pricing, and the maximum Opus cache-write rate for all input. Cache counts may overlap normal input counts; counting both deliberately overestimates. They are **usage-based conservative estimates, not verified invoices**.
 
@@ -29,6 +30,11 @@ its official pinned ID and $3/$15 standard pricing ($6 cache-write input);
 the $12/$30 envelope adds long-context and cache margin. A real connectivity
 call returned the exact requested snapshot. No new external judge calls were
 made for the Flash batch or baseline screens.
+
+Haiku 4.5 is the next prepared baseline-search target. Its official pinned ID
+is documented in the [migration guide](https://platform.claude.com/docs/en/models/haiku-4-5/migration-guide);
+standard pricing is $1/$5, with $2 maximum cache-write input. The $4/$10
+envelope is conservative and uses the unchanged request and total caps.
 
 Twenty-two offline checks cover reservation exhaustion, invalid usage, duplicate settlement, propagation through Inspect's real hook dispatcher, infrastructure limits, preservation of baseline seed objects, diagnostic failure-to-success behavior, the historical analysis corrections, exclusion of invalid or unassessable judgments from awareness negatives, shared scenario facts, synthetic Petri resource boundaries, verbatim role enforcement, observation windows, CLI diagnostic-call exclusion, and ownership/credit semantics. Run:
 
