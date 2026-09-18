@@ -14,4 +14,4 @@ src/seeds/as/RESULTS.md
 results/
 scripts/
 tools/*
-!tools/seed_cli.py
+!tools/seed_cli.py.wrangler/
